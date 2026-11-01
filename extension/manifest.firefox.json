@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "r1ytm",
+  "short_name": "r1ytm",
+  "version": "2.7",
+  "description": "A floating glass control bar for YouTube Music. Unofficial, not affiliated with YouTube or Google.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://music.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "r1ytm-bar@r1ftz",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    },
+    "gecko_android": {
+      "strict_min_version": "142.0"
+    }
+  }
+}

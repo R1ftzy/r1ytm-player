@@ -1,0 +1,18 @@
+# build output (regenerate with extension/build.ps1)
+dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# tooling
+node_modules/
+web-ext-artifacts/
+*.xpi
+*.log
+
+# local-only Tampermonkey userscript
+*.user.js
