@@ -19,7 +19,7 @@
   ],
   "browser_specific_settings": {
     "gecko": {
-      "id": "r1ytm-bar@r1ftz",
+      "id": "r1ytm@r1ftz",
       "strict_min_version": "140.0",
       "data_collection_permissions": {
         "required": ["none"]
