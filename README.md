@@ -1,6 +1,6 @@
 # r1ytm
 
-A floating Apple Music like control bar for YouTube Music. Unofficial, not affiliated with YouTube or Google.
+A floating, Apple Music style control bar for YouTube Music. Unofficial, and not affiliated with Google LLC or Apple Inc.
 
 ![r1ytm bar on YouTube Music, with the Better Lyrics extension](docs/screenshot.png)
 
