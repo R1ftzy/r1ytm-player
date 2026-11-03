@@ -33,7 +33,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
 // ==UserScript==
 // @name         r1ytm
 // @namespace    r1ytm
-// @version      1.4
+// @version      1.4.1
 // @description  A floating, Apple Music-style control bar for YouTube Music.
 // @match        https://music.youtube.com/*
 // @grant        none
@@ -1418,19 +1418,25 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
   window.amSettings = openSettings;      // also reachable from the console (e.g. when the sidebar is hidden)
 
   // the sidebar entry, after YTM's Home / Explore / Library. YTM's entries are Polymer elements we can't copy, so ours
-  // is plain markup that copies the computed look of a real (inactive) entry, which also follows the collapsed sidebar.
-  const guideEl = el('div', 'am-guide');
-  guideEl.setAttribute('role', 'link');
-  guideEl.tabIndex = 0;
-  guideEl.title = 'r1ytm settings';
-  const gItem = el('div', 'am-guide-item', guideEl);
-  const gIcon = el('span', 'am-guide-icon', gItem);
-  gIcon.append(svg(P_TUNE));
-  const gCol = el('div', 'am-guide-col', gItem);
-  const gTitle = el('span', 'am-guide-title', gCol);
-  gTitle.textContent = 'r1ytm';
-  guideEl.addEventListener('click', e => { e.stopPropagation(); openSettings(); });
-  guideEl.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSettings(); } });
+  // is plain markup that copies the computed look of a real (inactive) entry next to it. YTM keeps more than one guide
+  // (the expanded one and the collapsed / mini one, which can sit off-screen while "visible"), so every primary
+  // section gets its own entry, each styled after its own neighbours.
+  const makeGuideEntry = () => {
+    const g = el('div', 'am-guide');
+    g.setAttribute('role', 'link');
+    g.tabIndex = 0;
+    g.title = 'r1ytm settings';
+    const item = el('div', 'am-guide-item', g);
+    const icon = el('span', 'am-guide-icon', item);
+    icon.append(svg(P_TUNE));
+    const col = el('div', 'am-guide-col', item);
+    const ttl = el('span', 'am-guide-title', col);
+    ttl.textContent = 'r1ytm';
+    g.addEventListener('click', e => { e.stopPropagation(); openSettings(); });
+    g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSettings(); } });
+    return { g, item, icon, col, ttl };
+  };
+  const guideEntries = new Map();      // a guide section's #items -> our entry in it
 
   const copyCss = (from, to, props) => {
     if (!from) return;
@@ -1443,18 +1449,38 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
   const TEXT = ['font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing', 'color', 'text-align',
     'white-space', 'overflow', 'text-overflow', 'display', 'margin-top', 'margin-left', 'max-width'];
   const syncGuideEntry = () => {
-    // the visible guide (YTM can keep a second, hidden one for the collapsed / mini sidebar)
-    const items = [...document.querySelectorAll('ytmusic-guide-section-renderer[is-primary] #items')]
-      .find(n => shown(n) && n.getBoundingClientRect().width > 0);
-    const ref = items && (items.querySelector('ytmusic-guide-entry-renderer:not([active])') ||
-      items.querySelector('ytmusic-guide-entry-renderer'));
-    if (!ref) return;
-    if (guideEl.parentNode !== items || guideEl.nextElementSibling) items.append(guideEl);   // keep it last
-    copyCss(ref, guideEl, ['display', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-left', 'padding-right']);
-    copyCss(ref.querySelector('tp-yt-paper-item'), gItem, BOX);
-    copyCss(ref.querySelector('yt-icon'), gIcon, ['width', 'height', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'color', 'flex-shrink']);
-    copyCss(ref.querySelector('.title-column'), gCol, BOX.filter(pr => !/^(width|height|min-height)$/.test(pr)));
-    copyCss(ref.querySelector('.title'), gTitle, TEXT);
+    for (const [items, e] of guideEntries) if (!items.isConnected) { e.g.remove(); guideEntries.delete(items); }
+    for (const items of document.querySelectorAll('ytmusic-guide-section-renderer[is-primary] #items')) {
+      const ref = items.querySelector('ytmusic-guide-entry-renderer:not([active])') ||
+        items.querySelector('ytmusic-guide-entry-renderer');
+      if (!ref) continue;
+      let e = guideEntries.get(items);
+      if (!e) { e = makeGuideEntry(); guideEntries.set(items, e); }
+      if (e.g.parentNode !== items || e.g.nextElementSibling) items.append(e.g);   // keep it last
+      // a hidden guide has nothing to copy (display: none all the way down); it is restyled once it shows
+      if (!shown(ref)) continue;
+      // collapsed sidebar: YTM stacks icon over label; its own layout doesn't carry over by copying, so ours is done in
+      // CSS (.am-collapsed) and only sizes, font, colors and the icon-to-label gap are copied
+      const collapsed = ref.hasAttribute('is-collapsed') || !!items.closest('[is-collapsed]');
+      e.g.classList.toggle('am-collapsed', collapsed);
+      for (const n of [e.g, e.item, e.icon, e.col, e.ttl]) n.style.cssText = '';     // nothing stale from the other mode
+      const rItem = ref.querySelector('tp-yt-paper-item'), rIcon = ref.querySelector('yt-icon'), rTitle = ref.querySelector('.title');
+      copyCss(ref, e.g, ['display', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-left', 'padding-right']);
+      copyCss(rIcon, e.icon, ['width', 'height', 'color', 'flex-shrink'].concat(collapsed ? [] : ['margin-top', 'margin-right', 'margin-bottom', 'margin-left']));
+      if (collapsed) {
+        copyCss(rItem, e.item, ['box-sizing', 'width', 'height', 'min-height', 'border-radius', 'padding-top', 'padding-bottom',
+          'margin-top', 'margin-right', 'margin-bottom', 'margin-left']);
+        copyCss(rTitle, e.ttl, ['font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing', 'color']);
+        if (rIcon && rTitle) {
+          const gap = rTitle.getBoundingClientRect().top - rIcon.getBoundingClientRect().bottom;
+          e.item.style.rowGap = Math.max(0, Math.round(gap)) + 'px';
+        }
+      } else {
+        copyCss(rItem, e.item, BOX);
+        copyCss(ref.querySelector('.title-column'), e.col, BOX.filter(pr => !/^(width|height|min-height)$/.test(pr)));
+        copyCss(rTitle, e.ttl, TEXT);
+      }
+    }
   };
 
   const setStyle = el('style', null, document.head);
@@ -1464,6 +1490,13 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     .am-guide:hover .am-guide-item, .am-guide:focus-visible .am-guide-item { background: rgb(255 255 255 / .1); }
     .am-guide-icon { display: grid; place-items: center; }
     .am-guide-icon svg { width: 100%; height: 100%; fill: currentColor; }
+    /* collapsed sidebar: icon centered above a small centered label, like YTM's own collapsed entries */
+    .am-guide.am-collapsed .am-guide-item { display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding-left: 0; padding-right: 0; }
+    .am-guide.am-collapsed .am-guide-icon { margin: 0; }
+    .am-guide.am-collapsed .am-guide-col { display: block; width: 100%; margin: 0; padding: 0; text-align: center; }
+    .am-guide.am-collapsed .am-guide-title { display: block; margin: 0; text-align: center;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
     .am-set-back { position: fixed; inset: 0; z-index: 100002; display: grid; place-items: center; padding: 16px;
       background: rgb(0 0 0 / .35); animation: am-set-fade .2s ease; }
@@ -1629,7 +1662,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     closeMenu();
     closeSettings();
     bar.remove();
-    guideEl.remove();
+    for (const e of guideEntries.values()) e.g.remove();
     styleEl.remove();
     setStyle.remove();
     for (const s of SETTINGS) if (s.css) document.documentElement.style.removeProperty(s.css(0)[0]);
