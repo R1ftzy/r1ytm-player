@@ -33,7 +33,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
 // ==UserScript==
 // @name         r1ytm
 // @namespace    r1ytm
-// @version      1.2
+// @version      1.3
 // @description  A floating, Apple Music-style control bar for YouTube Music.
 // @match        https://music.youtube.com/*
 // @grant        none
@@ -43,7 +43,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
   'use strict';
 
   /* ---------- settings ---------- */
-  const PLAYER_PAGE_BAR_SPACE = '88px';          // space the player page keeps free at the bottom for the bar (not in fullscreen)
+  const PLAYER_PAGE_BAR_SPACE = '88px';          // space the player page keeps free for the bar until it's measured (follows the bar size)
   const ANIM_MS = 700;                           // player page open / background fade-out duration
   const FADE_IN_MS = 280;                        // how fast the page comes back after closing the player
   const ANIM_EASE = 'cubic-bezier(.16, 1, .3, 1)'; // expo-out: fast start, long soft landing
@@ -816,7 +816,8 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     }
     // player page: keep YTM's own bottom space so its layout stays aligned (none in fullscreen)
     const pp = playerPage();
-    if (pp) pp.style.setProperty('--ytmusic-player-bar-height', fs ? '0px' : PLAYER_PAGE_BAR_SPACE, 'important');
+    const space = bar.offsetHeight ? (bar.offsetHeight + 28) + 'px' : PLAYER_PAGE_BAR_SPACE;   // bar + its margins
+    if (pp) pp.style.setProperty('--ytmusic-player-bar-height', fs ? '0px' : space, 'important');
 
     document.querySelectorAll(`${MINI}, ytmusic-player-bar, #player-bar-background`).forEach(hideNode);
 
@@ -841,7 +842,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     ytmusic-search-page::after {
       content: "";
       display: block;
-      height: 100px;
+      height: calc(40px + 60px * var(--am-size, 1));
     }
     /* ...but not inside the player page, which keeps its own bottom space, and not in fullscreen */
     ytmusic-player-page ytmusic-section-list-renderer::after,
@@ -866,18 +867,18 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
       html.am-player-open ytmusic-app-layout > #content { transition: none; }
     }
 
-    .am-bar { --am-inset: 16px; --am-h: 60px;
+    .am-bar { --am-inset: 16px; --am-h: 60px; --am-s: var(--am-size, 1);
       /* idle logo colors (for the red brand logo: #ff0000, #fff, #fff) */
       --am-logo-bg: rgb(255 255 255 / .45);
       --am-logo-ring: rgb(20 20 20 / .85);
       --am-logo-tri: rgb(20 20 20 / .85);
       position: fixed; left: var(--am-inset); right: var(--am-inset); bottom: 14px; z-index: 99999;
-      height: var(--am-h); cursor: pointer;
+      height: calc(var(--am-h) * var(--am-s)); cursor: pointer;
       display: grid; grid-template-columns: 1fr minmax(0, 540px) 1fr; align-items: center; gap: 16px;
-      padding: 0 18px; border-radius: 22px; color: #fff;
+      padding: 0 18px; border-radius: calc(22px * var(--am-s)); color: #fff;
       font-family: "Switzer", "SF Pro", system-ui, sans-serif;
-      background: rgb(40 40 40 / .28);
-      backdrop-filter: blur(28px) saturate(200%); -webkit-backdrop-filter: blur(28px) saturate(200%);
+      background: rgb(40 40 40 / var(--am-bar-a, .28));
+      backdrop-filter: blur(var(--am-bar-blur, 28px)) saturate(200%); -webkit-backdrop-filter: blur(var(--am-bar-blur, 28px)) saturate(200%);
       border: 1px solid rgb(255 255 255 / .12);
       box-shadow: 0 8px 32px rgb(0 0 0 / .3), inset 0 1px 0 rgb(255 255 255 / .08);
       transition: left .35s cubic-bezier(.2,.8,.2,1), right .35s cubic-bezier(.2,.8,.2,1),
@@ -889,21 +890,21 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
 
     /* compact: centered pill, max 860px wide */
     .am-bar.am-compact { --am-inset: max(16px, calc(50% - 430px)); --am-h: 56px;
-      grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; padding: 0 12px; border-radius: 18px; }
-    .am-bar.am-compact .am-btn { width: 30px; height: 30px; }
+      grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; padding: 0 12px; border-radius: calc(18px * var(--am-s)); }
+    .am-bar.am-compact .am-btn { width: calc(30px * var(--am-s)); height: calc(30px * var(--am-s)); }
     .am-bar.am-compact .am-group { gap: 2px; }
 
     .am-group { display: flex; align-items: center; gap: 4px; }
     .am-left  { justify-self: start; }
     .am-right { justify-self: end; }
 
-    .am-btn { all: unset; position: relative; cursor: pointer; width: 34px; height: 34px;
+    .am-btn { all: unset; position: relative; cursor: pointer; width: calc(34px * var(--am-s, 1)); height: calc(34px * var(--am-s, 1));
       display: grid; place-items: center; border-radius: 9px; transition: background .15s; }
     .am-btn:hover { background: rgb(255 255 255 / .1); }
-    .am-btn svg { width: 22px; height: 22px; fill: rgb(255 255 255 / .8); pointer-events: none; transition: fill .15s; }
-    .am-btn.am-dim svg { width: 18px; height: 18px; fill: rgb(255 255 255 / .5); }
-    .am-btn.am-big svg { width: 30px; height: 30px; fill: rgb(255 255 255 / .9); }
-    .am-btn.am-mode svg { width: 16px; height: 16px; fill: rgb(255 255 255 / .45); }
+    .am-btn svg { width: calc(22px * var(--am-s, 1)); height: calc(22px * var(--am-s, 1)); fill: rgb(255 255 255 / .8); pointer-events: none; transition: fill .15s; }
+    .am-btn.am-dim svg { width: calc(18px * var(--am-s, 1)); height: calc(18px * var(--am-s, 1)); fill: rgb(255 255 255 / .5); }
+    .am-btn.am-big svg { width: calc(30px * var(--am-s, 1)); height: calc(30px * var(--am-s, 1)); fill: rgb(255 255 255 / .9); }
+    .am-btn.am-mode svg { width: calc(16px * var(--am-s, 1)); height: calc(16px * var(--am-s, 1)); fill: rgb(255 255 255 / .45); }
     .am-btn.am-on svg { fill: #fa586a; }
     .am-btn.am-one::after { content: "1"; position: absolute; right: 4px; bottom: 4px;
       font: 700 8px/1 system-ui; color: #fa586a; }
@@ -912,10 +913,11 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     /* "more" menu; YTM's own dropdown stays invisible while we use it to run an action */
     html.am-menu-proxy tp-yt-iron-dropdown { opacity: 0 !important; pointer-events: none !important; }
     .am-menu-item.am-menu-off { opacity: .35; pointer-events: none; }
-    .am-menu { position: fixed; z-index: 100001; width: 288px; max-height: calc(100vh - 16px); overflow-y: auto;
+    .am-menu { --am-ms: var(--am-menu-size, 1);
+      position: fixed; z-index: 100001; width: calc(288px * var(--am-ms)); max-height: calc(100vh - 16px); overflow-y: auto;
       box-sizing: border-box; padding: 6px; border-radius: 18px; color: #fff; outline: none;
       font-family: "Switzer", "SF Pro", system-ui, sans-serif; scrollbar-width: none;
-      background: rgb(34 34 36 / .72);
+      background: rgb(34 34 36 / var(--am-menu-a, .72));
       backdrop-filter: blur(40px) saturate(190%); -webkit-backdrop-filter: blur(40px) saturate(190%);
       border: 1px solid rgb(255 255 255 / .12);
       box-shadow: 0 18px 50px rgb(0 0 0 / .45), 0 2px 8px rgb(0 0 0 / .25), inset 0 1px 0 rgb(255 255 255 / .07);
@@ -925,13 +927,13 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     @keyframes am-menu-in { from { opacity: 0; scale: .92; translate: 0 6px; } to { opacity: 1; scale: 1; translate: 0 0; } }
 
     .am-menu-head { display: flex; align-items: center; gap: 11px; padding: 6px 8px 10px; }
-    .am-menu-art { width: 42px; height: 42px; border-radius: 8px; object-fit: cover; flex-shrink: 0;
+    .am-menu-art { width: calc(42px * var(--am-ms)); height: calc(42px * var(--am-ms)); border-radius: 8px; object-fit: cover; flex-shrink: 0;
       background: rgb(255 255 255 / .08); box-shadow: 0 2px 8px rgb(0 0 0 / .3); }
     .am-menu-art:not([src]) { visibility: hidden; }
     .am-menu-meta { min-width: 0; }
     .am-menu-title, .am-menu-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .am-menu-title { font-size: 13.5px; font-weight: 600; }
-    .am-menu-sub { font-size: 12px; color: rgb(255 255 255 / .55); margin-top: 1px; }
+    .am-menu-title { font-size: calc(13.5px * var(--am-ms)); font-weight: 600; }
+    .am-menu-sub { font-size: calc(12px * var(--am-ms)); color: rgb(255 255 255 / .55); margin-top: 1px; }
 
     .am-menu-item { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center;
       color: rgb(255 255 255 / .92); transition: background .12s ease, color .12s ease; }
@@ -939,33 +941,33 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     .am-menu-item:hover, .am-menu-item.am-kb { background: rgb(255 255 255 / .1); color: #fff; }
     .am-menu-item:active { background: rgb(255 255 255 / .16); }
     .am-menu-item.am-kb { box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / .35); }
-    .am-menu-ic { width: 20px; height: 20px; flex-shrink: 0; display: grid; place-items: center; color: rgb(255 255 255 / .75); }
-    .am-menu-ic svg { width: 20px !important; height: 20px !important; display: block; fill: currentColor; }
+    .am-menu-ic { width: calc(20px * var(--am-ms)); height: calc(20px * var(--am-ms)); flex-shrink: 0; display: grid; place-items: center; color: rgb(255 255 255 / .75); }
+    .am-menu-ic svg { width: calc(20px * var(--am-ms)) !important; height: calc(20px * var(--am-ms)) !important; display: block; fill: currentColor; }
     .am-menu-item:hover .am-menu-ic { color: #fff; }
     .am-menu-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
     .am-menu-tiles { display: grid; gap: 6px; padding: 2px 2px 6px; }
-    .am-menu-tile { flex-direction: column; justify-content: center; gap: 6px; min-height: 64px; padding: 8px 4px;
-      border-radius: 12px; background: rgb(255 255 255 / .07); font-size: 11px; line-height: 1.2; text-align: center; }
+    .am-menu-tile { flex-direction: column; justify-content: center; gap: 6px; min-height: calc(64px * var(--am-ms)); padding: 8px 4px;
+      border-radius: 12px; background: rgb(255 255 255 / .07); font-size: calc(11px * var(--am-ms)); line-height: 1.2; text-align: center; }
     .am-menu-tile .am-menu-label { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; }
-    .am-menu-tile .am-menu-ic, .am-menu-tile .am-menu-ic svg { width: 22px !important; height: 22px !important; }
+    .am-menu-tile .am-menu-ic, .am-menu-tile .am-menu-ic svg { width: calc(22px * var(--am-ms)) !important; height: calc(22px * var(--am-ms)) !important; }
 
-    .am-menu-row { width: 100%; gap: 12px; height: 36px; padding: 0 10px; border-radius: 10px; font-size: 13.5px; white-space: nowrap; }
+    .am-menu-row { width: 100%; gap: 12px; height: calc(36px * var(--am-ms)); padding: 0 10px; border-radius: 10px; font-size: calc(13.5px * var(--am-ms)); white-space: nowrap; }
     .am-menu-sep { height: 1px; margin: 5px 10px; background: rgb(255 255 255 / .09); }
-    .am-menu-quiet .am-menu-row { height: 32px; font-size: 12.5px; color: rgb(255 255 255 / .6); }
-    .am-menu-quiet .am-menu-ic, .am-menu-quiet .am-menu-ic svg { width: 17px !important; height: 17px !important; }
+    .am-menu-quiet .am-menu-row { height: calc(32px * var(--am-ms)); font-size: calc(12.5px * var(--am-ms)); color: rgb(255 255 255 / .6); }
+    .am-menu-quiet .am-menu-ic, .am-menu-quiet .am-menu-ic svg { width: calc(17px * var(--am-ms)) !important; height: calc(17px * var(--am-ms)) !important; }
     .am-menu-quiet .am-menu-ic { color: rgb(255 255 255 / .45); }
 
     @media (prefers-reduced-motion: reduce) { .am-menu { animation: none; } .am-menu.am-menu-out { transition: none; } }
 
-    .am-lcd { position: relative; min-width: 0; height: 52px; display: flex; align-items: center; gap: 10px;
+    .am-lcd { position: relative; min-width: 0; height: calc(52px * var(--am-s, 1)); display: flex; align-items: center; gap: 10px;
       padding: 0 12px 0 4px; border-radius: 11px; background: transparent; border: none; }
-    .am-art { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; flex-shrink: 0; }
+    .am-art { width: calc(44px * var(--am-s, 1)); height: calc(44px * var(--am-s, 1)); border-radius: 8px; object-fit: cover; flex-shrink: 0; }
     .am-art:not([src]), .am-art[src=""] { visibility: hidden; }
     .am-info { min-width: 0; flex: 1; padding-bottom: 8px; }
     .am-title, .am-artist { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .am-title  { font-size: 13px; font-weight: 600; }
-    .am-artist { font-size: 12px; color: rgb(255 255 255 / .55); }
+    .am-title  { font-size: calc(13px * var(--am-s, 1)); font-weight: 600; }
+    .am-artist { font-size: calc(12px * var(--am-s, 1)); color: rgb(255 255 255 / .55); }
     .am-sep { opacity: .6; }
 
     /* like + 3-dot buttons inside the now-playing area, same size as the other buttons, above the progress bar */
@@ -977,7 +979,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     .am-link:hover { text-decoration: underline; color: #fff; }
     .am-title.am-link { display: block; width: fit-content; max-width: 100%; }
 
-    .am-track { position: absolute; left: 58px; right: 12px; bottom: 2px; height: 9px; cursor: pointer; }
+    .am-track { position: absolute; left: calc(14px + 44px * var(--am-s, 1)); right: 12px; bottom: 2px; height: 9px; cursor: pointer; }
     .am-track::before { content: ""; position: absolute; inset: 3px 0; border-radius: 2px;
       background: rgb(255 255 255 / .15); }
     .am-fill { position: absolute; left: 0; top: 3px; height: 3px; width: 0; border-radius: 2px;
@@ -985,7 +987,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
 
     /* idle state: nothing playing -> centered logo */
     .am-logo { display: none; margin: 0 auto; }
-    .am-logo svg { width: 30px; height: 30px; display: block; }
+    .am-logo svg { width: calc(30px * var(--am-s, 1)); height: calc(30px * var(--am-s, 1)); display: block; }
     .am-logo .am-logo-bg   { fill: var(--am-logo-bg); }
     .am-logo .am-logo-ring { stroke: var(--am-logo-ring); }
     .am-logo .am-logo-tri  { fill: var(--am-logo-tri); }
@@ -1156,6 +1158,251 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
   const modeBtn = btn(right, 'shrink', () => applyMode(!bar.classList.contains('am-compact')), 'am-mode');
   applyMode(store.get('am-bar-compact', '0') === '1');
 
+  /* ---------- settings (sidebar entry "r1ytm" -> panel) ---------- */
+  // Values live in localStorage ("am-settings") and are applied as CSS variables on <html>; the bar layout
+  // (full / compact) keeps its own key ("am-bar-compact") through applyMode().
+  const SETTINGS = [
+    { group: 'Transparency', key: 'barAlpha', label: 'Bar opacity', min: 0, max: 90, step: 1, def: 28, unit: '%',
+      css: v => ['--am-bar-a', v / 100] },
+    { group: 'Transparency', key: 'barBlur', label: 'Bar blur', min: 0, max: 60, step: 1, def: 28, unit: 'px',
+      css: v => ['--am-bar-blur', v + 'px'] },
+    { group: 'Transparency', key: 'menuAlpha', label: 'Menu opacity', min: 30, max: 98, step: 1, def: 72, unit: '%',
+      css: v => ['--am-menu-a', v / 100] },
+    { group: 'Size', key: 'barSize', label: 'Bar size', min: 80, max: 130, step: 5, def: 100, unit: '%',
+      css: v => ['--am-size', v / 100] },
+    { group: 'Size', key: 'menuSize', label: 'Menu size', min: 85, max: 125, step: 5, def: 100, unit: '%',
+      css: v => ['--am-menu-size', v / 100] },
+  ];
+  const loadSettings = () => {
+    let saved = {};
+    try { saved = JSON.parse(store.get('am-settings', '{}')) || {}; } catch {}
+    const out = {};
+    for (const s of SETTINGS) {
+      const v = Number(saved[s.key]);
+      out[s.key] = Number.isFinite(v) ? Math.min(s.max, Math.max(s.min, v)) : s.def;
+    }
+    return out;
+  };
+  const settings = loadSettings();
+  const applySettings = () => {
+    for (const s of SETTINGS) {
+      const [name, value] = s.css(settings[s.key]);
+      document.documentElement.style.setProperty(name, String(value));
+    }
+  };
+  const saveSettings = () => store.set('am-settings', JSON.stringify(settings));
+  applySettings();
+
+  const P_TUNE = 'M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z';
+  const P_CLOSE = 'M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z';
+
+  let setEl = null;
+  const closeSettings = () => {
+    if (!setEl) return;
+    const s = setEl;
+    setEl = null;
+    s.classList.add('am-set-out');
+    setTimeout(() => s.remove(), 180);
+  };
+  const openSettings = () => {
+    if (setEl) return;
+    closeMenu();
+    const back = el('div', 'am-set-back', document.body);
+    const p = el('div', 'am-set', back);
+    p.setAttribute('role', 'dialog');
+    p.setAttribute('aria-label', 'r1ytm settings');
+
+    const head = el('div', 'am-set-head', p);
+    const lg = el('div', 'am-set-logo', head);
+    lg.append(ytLogo());
+    const ht = el('div', 'am-set-htext', head);
+    el('div', 'am-set-title', ht).textContent = 'r1ytm';
+    el('div', 'am-set-sub', ht).textContent = 'Bar & menu settings';
+    const x = el('button', 'am-set-x', head);
+    x.title = 'Close';
+    x.append(svg(P_CLOSE));
+    x.addEventListener('click', closeSettings);
+
+    const ranges = [];
+    let section = null, lastGroup = '';
+    for (const s of SETTINGS) {
+      if (s.group !== lastGroup) {
+        lastGroup = s.group;
+        el('div', 'am-set-group', p).textContent = s.group;
+        section = el('div', 'am-set-card', p);
+      }
+      const row = el('label', 'am-set-row', section);
+      const top = el('div', 'am-set-rowtop', row);
+      el('span', 'am-set-label', top).textContent = s.label;
+      const val = el('span', 'am-set-val', top);
+      const r = el('input', 'am-set-range', row);
+      Object.assign(r, { type: 'range', min: s.min, max: s.max, step: s.step });
+      const show = () => {
+        r.value = String(settings[s.key]);
+        val.textContent = settings[s.key] + s.unit;
+        r.style.setProperty('--p', ((settings[s.key] - s.min) / (s.max - s.min) * 100) + '%');
+      };
+      r.addEventListener('input', () => {
+        settings[s.key] = +r.value;
+        applySettings();
+        show();
+        saveSettings();
+      });
+      show();
+      ranges.push(show);
+    }
+    // bar layout (full / compact), in the size card
+    const lay = el('div', 'am-set-row am-set-inline', section);
+    el('span', 'am-set-label', lay).textContent = 'Bar layout';
+    const seg = el('div', 'am-set-seg', lay);
+    const segBtns = [['Full', false], ['Compact', true]].map(([t, compact]) => {
+      const b = el('button', 'am-set-segbtn', seg);
+      b.textContent = t;
+      b.addEventListener('click', () => { applyMode(compact); showSeg(); });
+      return [b, compact];
+    });
+    const showSeg = () => segBtns.forEach(([b, c]) => b.classList.toggle('am-on', bar.classList.contains('am-compact') === c));
+    showSeg();
+
+    const foot = el('div', 'am-set-foot', p);
+    const reset = el('button', 'am-set-btn', foot);
+    reset.textContent = 'Reset to defaults';
+    reset.addEventListener('click', () => {
+      for (const s of SETTINGS) settings[s.key] = s.def;
+      applySettings();
+      saveSettings();
+      applyMode(false);
+      ranges.forEach(f => f());
+      showSeg();
+    });
+    const done = el('button', 'am-set-btn am-set-primary', foot);
+    done.textContent = 'Done';
+    done.addEventListener('click', closeSettings);
+
+    // close on a click on the dimmed backdrop or Escape; keys stay inside (no YTM hotkeys while adjusting)
+    back.addEventListener('click', e => { if (e.target === back) closeSettings(); });
+    back.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if (e.key === 'Escape') closeSettings();
+    });
+    setEl = back;
+    done.focus({ preventScroll: true });
+  };
+  window.amSettings = openSettings;      // also reachable from the console (e.g. when the sidebar is hidden)
+
+  // the sidebar entry, after YTM's Home / Explore / Library. YTM's entries are Polymer elements we can't copy, so ours
+  // is plain markup that copies the computed look of a real (inactive) entry, which also follows the collapsed sidebar.
+  const guideEl = el('div', 'am-guide');
+  guideEl.setAttribute('role', 'link');
+  guideEl.tabIndex = 0;
+  guideEl.title = 'r1ytm settings';
+  const gItem = el('div', 'am-guide-item', guideEl);
+  const gIcon = el('span', 'am-guide-icon', gItem);
+  gIcon.append(svg(P_TUNE));
+  const gCol = el('div', 'am-guide-col', gItem);
+  const gTitle = el('span', 'am-guide-title', gCol);
+  gTitle.textContent = 'r1ytm';
+  guideEl.addEventListener('click', e => { e.stopPropagation(); openSettings(); });
+  guideEl.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSettings(); } });
+
+  const copyCss = (from, to, props) => {
+    if (!from) return;
+    const cs = getComputedStyle(from);
+    for (const pr of props) to.style.setProperty(pr, cs.getPropertyValue(pr));
+  };
+  const BOX = ['display', 'flex-direction', 'align-items', 'justify-content', 'box-sizing', 'width', 'height', 'min-height',
+    'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left',
+    'border-radius', 'column-gap', 'row-gap', 'flex-shrink'];
+  const TEXT = ['font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing', 'color', 'text-align',
+    'white-space', 'overflow', 'text-overflow', 'display', 'margin-top', 'margin-left', 'max-width'];
+  const syncGuideEntry = () => {
+    // the visible guide (YTM can keep a second, hidden one for the collapsed / mini sidebar)
+    const items = [...document.querySelectorAll('ytmusic-guide-section-renderer[is-primary] #items')]
+      .find(n => shown(n) && n.getBoundingClientRect().width > 0);
+    const ref = items && (items.querySelector('ytmusic-guide-entry-renderer:not([active])') ||
+      items.querySelector('ytmusic-guide-entry-renderer'));
+    if (!ref) return;
+    if (guideEl.parentNode !== items || guideEl.nextElementSibling) items.append(guideEl);   // keep it last
+    copyCss(ref, guideEl, ['display', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-left', 'padding-right']);
+    copyCss(ref.querySelector('tp-yt-paper-item'), gItem, BOX);
+    copyCss(ref.querySelector('yt-icon'), gIcon, ['width', 'height', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'color', 'flex-shrink']);
+    copyCss(ref.querySelector('.title-column'), gCol, BOX.filter(pr => !/^(width|height|min-height)$/.test(pr)));
+    copyCss(ref.querySelector('.title'), gTitle, TEXT);
+  };
+
+  const setStyle = el('style', null, document.head);
+  setStyle.textContent = `
+    .am-guide { cursor: pointer; outline: none; }
+    .am-guide-item { cursor: pointer; transition: background .15s; }
+    .am-guide:hover .am-guide-item, .am-guide:focus-visible .am-guide-item { background: rgb(255 255 255 / .1); }
+    .am-guide-icon { display: grid; place-items: center; }
+    .am-guide-icon svg { width: 100%; height: 100%; fill: currentColor; }
+
+    .am-set-back { position: fixed; inset: 0; z-index: 100002; display: grid; place-items: center; padding: 16px;
+      background: rgb(0 0 0 / .35); animation: am-set-fade .2s ease; }
+    .am-set-back.am-set-out { opacity: 0; transition: opacity .16s ease; pointer-events: none; }
+    .am-set { width: min(400px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; box-sizing: border-box;
+      padding: 18px; border-radius: 22px; color: #fff; scrollbar-width: none;
+      font-family: "Switzer", "SF Pro", system-ui, sans-serif;
+      background: rgb(30 30 32 / .78);
+      backdrop-filter: blur(40px) saturate(190%); -webkit-backdrop-filter: blur(40px) saturate(190%);
+      border: 1px solid rgb(255 255 255 / .12);
+      box-shadow: 0 24px 70px rgb(0 0 0 / .5), inset 0 1px 0 rgb(255 255 255 / .07);
+      animation: am-menu-in .24s cubic-bezier(.2, .9, .25, 1.05); }
+    .am-set-out .am-set { scale: .97; transition: scale .16s ease; }
+    @keyframes am-set-fade { from { opacity: 0; } }
+
+    .am-set-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+    .am-set-logo svg { width: 34px; height: 34px; display: block; }
+    .am-set-logo .am-logo-bg { fill: rgb(255 255 255 / .9); }
+    .am-set-logo .am-logo-ring { stroke: rgb(20 20 20 / .85); }
+    .am-set-logo .am-logo-tri { fill: rgb(20 20 20 / .85); }
+    .am-set-htext { flex: 1; min-width: 0; }
+    .am-set-title { font-size: 17px; font-weight: 700; }
+    .am-set-sub { font-size: 12.5px; color: rgb(255 255 255 / .55); margin-top: 1px; }
+    .am-set-x { all: unset; cursor: pointer; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px;
+      transition: background .15s; }
+    .am-set-x:hover, .am-set-x:focus-visible { background: rgb(255 255 255 / .1); }
+    .am-set-x svg { width: 20px; height: 20px; fill: rgb(255 255 255 / .75); }
+
+    .am-set-group { font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+      color: rgb(255 255 255 / .45); margin: 14px 6px 7px; }
+    .am-set-card { border-radius: 14px; background: rgb(255 255 255 / .06); padding: 4px 14px; }
+    .am-set-row { display: block; padding: 11px 0; cursor: default; }
+    .am-set-row + .am-set-row { border-top: 1px solid rgb(255 255 255 / .07); }
+    .am-set-rowtop { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 9px; }
+    .am-set-label { font-size: 13.5px; }
+    .am-set-val { font-size: 12.5px; color: rgb(255 255 255 / .55); font-variant-numeric: tabular-nums; }
+
+    .am-set-range { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 4px; margin: 0;
+      border-radius: 2px; cursor: pointer; outline: none;
+      background: linear-gradient(to right, rgb(255 255 255 / .85) var(--p, 50%), rgb(255 255 255 / .15) var(--p, 50%)); }
+    .am-set-range::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+      background: #fff; box-shadow: 0 1px 4px rgb(0 0 0 / .4); transition: scale .12s; }
+    .am-set-range::-moz-range-thumb { width: 16px; height: 16px; border: none; border-radius: 50%;
+      background: #fff; box-shadow: 0 1px 4px rgb(0 0 0 / .4); }
+    .am-set-range::-moz-range-track { background: transparent; }
+    .am-set-range:hover::-webkit-slider-thumb, .am-set-range:focus-visible::-webkit-slider-thumb { scale: 1.15; }
+    .am-set-range:focus-visible { box-shadow: 0 0 0 3px rgb(255 255 255 / .15); }
+
+    .am-set-inline { display: flex; align-items: center; justify-content: space-between; }
+    .am-set-seg { display: flex; padding: 3px; border-radius: 10px; background: rgb(0 0 0 / .25); }
+    .am-set-segbtn { all: unset; cursor: pointer; padding: 5px 12px; border-radius: 8px; font-size: 12.5px;
+      color: rgb(255 255 255 / .7); transition: background .15s, color .15s; }
+    .am-set-segbtn:hover { color: #fff; }
+    .am-set-segbtn.am-on { background: rgb(255 255 255 / .16); color: #fff; }
+    .am-set-segbtn:focus-visible { box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / .4); }
+
+    .am-set-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 16px; }
+    .am-set-btn { all: unset; cursor: pointer; padding: 8px 14px; border-radius: 10px; font-size: 13px;
+      color: rgb(255 255 255 / .7); transition: background .15s, color .15s; }
+    .am-set-btn:hover, .am-set-btn:focus-visible { background: rgb(255 255 255 / .1); color: #fff; }
+    .am-set-primary { background: #fff; color: #111; font-weight: 600; padding: 8px 20px; }
+    .am-set-primary:hover, .am-set-primary:focus-visible { background: rgb(255 255 255 / .85); color: #111; }
+
+    @media (prefers-reduced-motion: reduce) { .am-set-back, .am-set { animation: none; } }
+  `;
+
   // react to fullscreen immediately (the loop below also checks)
   document.addEventListener('fullscreenchange', () => {
     bar.classList.toggle('am-hidden', isFullscreen());
@@ -1163,9 +1410,10 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
   });
 
   /* ---------- sync loop ---------- */
-  let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false;
+  let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
   const timer = setInterval(() => {
     if (performance.now() > animatingUntil) hideBase();   // skip layout-heavy work mid-animation
+    if (tick++ % 4 === 0) syncGuideEntry();               // sidebar entry: once a second is plenty
     watchPage();
     onPageState();
     bar.classList.toggle('am-hidden', isFullscreen());
@@ -1240,8 +1488,12 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
   window.amOff = () => {
     clearInterval(timer);
     closeMenu();
+    closeSettings();
     bar.remove();
+    guideEl.remove();
     styleEl.remove();
+    setStyle.remove();
+    for (const s of SETTINGS) document.documentElement.style.removeProperty(s.css(0)[0]);
     document.documentElement.classList.remove('am-player-open', 'am-animating', 'am-fs', 'am-mini-hidden');
     document.querySelectorAll(`${MINI}, ytmusic-player-bar, #player-bar-background`).forEach(n => {
       n.style.removeProperty('opacity'); n.style.removeProperty('pointer-events');
