@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "r1ytm",
   "short_name": "r1ytm",
-  "version": "1.3",
+  "version": "1.4",
   "description": "A floating, Apple Music style control bar for YouTube Music. Unofficial, and not affiliated with Google LLC or Apple Inc.",
   "minimum_chrome_version": "104",
   "icons": {

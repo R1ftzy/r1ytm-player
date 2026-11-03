@@ -33,7 +33,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
 // ==UserScript==
 // @name         r1ytm
 // @namespace    r1ytm
-// @version      1.3
+// @version      1.4
 // @description  A floating, Apple Music-style control bar for YouTube Music.
 // @match        https://music.youtube.com/*
 // @grant        none
@@ -885,6 +885,9 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
                   height .35s cubic-bezier(.2,.8,.2,1), border-radius .35s, padding .35s,
                   opacity .25s ease, transform .25s ease; }
 
+    /* refraction: blur, saturation and displacement all come from the SVG filter */
+    html.am-refract .am-bar { backdrop-filter: url(#am-refract); -webkit-backdrop-filter: url(#am-refract); }
+
     /* hidden in fullscreen */
     .am-bar.am-hidden { opacity: 0; transform: translateY(24px); pointer-events: none; }
 
@@ -918,7 +921,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
       box-sizing: border-box; padding: 6px; border-radius: 18px; color: #fff; outline: none;
       font-family: "Switzer", "SF Pro", system-ui, sans-serif; scrollbar-width: none;
       background: rgb(34 34 36 / var(--am-menu-a, .72));
-      backdrop-filter: blur(40px) saturate(190%); -webkit-backdrop-filter: blur(40px) saturate(190%);
+      backdrop-filter: blur(var(--am-menu-blur, 40px)) saturate(190%); -webkit-backdrop-filter: blur(var(--am-menu-blur, 40px)) saturate(190%);
       border: 1px solid rgb(255 255 255 / .12);
       box-shadow: 0 18px 50px rgb(0 0 0 / .45), 0 2px 8px rgb(0 0 0 / .25), inset 0 1px 0 rgb(255 255 255 / .07);
       animation: am-menu-in .22s cubic-bezier(.2, .9, .25, 1.05); }
@@ -1168,11 +1171,106 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
       css: v => ['--am-bar-blur', v + 'px'] },
     { group: 'Transparency', key: 'menuAlpha', label: 'Menu opacity', min: 30, max: 98, step: 1, def: 72, unit: '%',
       css: v => ['--am-menu-a', v / 100] },
+    { group: 'Transparency', key: 'menuBlur', label: 'Menu blur', min: 0, max: 80, step: 1, def: 40, unit: 'px',
+      css: v => ['--am-menu-blur', v + 'px'] },
+    { group: 'Glass', key: 'refract', type: 'toggle', label: 'Refraction', min: 0, max: 1, def: 0,
+      note: () => canRefract ? 'Bends the background at the edges of the bar' : 'Needs Chrome, Edge or Brave',
+      disabled: () => !canRefract },
+    { group: 'Glass', key: 'refractStrength', label: 'Refraction strength', min: 10, max: 200, step: 1, def: 90, unit: 'px',
+      dep: 'refract' },
     { group: 'Size', key: 'barSize', label: 'Bar size', min: 80, max: 130, step: 5, def: 100, unit: '%',
       css: v => ['--am-size', v / 100] },
     { group: 'Size', key: 'menuSize', label: 'Menu size', min: 85, max: 125, step: 5, def: 100, unit: '%',
       css: v => ['--am-menu-size', v / 100] },
   ];
+  /* refraction ("liquid glass"): an SVG displacement filter in the bar's backdrop-filter. The map is drawn for the bar's
+     exact size and rounded shape: near the edge every pixel samples the background a little further inside, so it
+     bends like the rim of a glass pane. Only Chromium supports url() filters in backdrop-filter; elsewhere the toggle is off. */
+  // CSS.supports() can't tell: Firefox accepts url() in backdrop-filter but then drops the whole filter (no blur at all).
+  // Only Chromium renders it, and Chromium is the engine that has navigator.userAgentData with a "Chromium" brand.
+  const canRefract = !!(navigator.userAgentData && navigator.userAgentData.brands &&
+    navigator.userAgentData.brands.some(b => /chromium/i.test(b.brand)));
+  const svgEl = (tag, attrs, parent) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.append(e);
+    return e;
+  };
+  // no innerHTML: YTM enforces Trusted Types
+  const refractDefs = svgEl('svg', { 'aria-hidden': 'true', width: 0, height: 0 });
+  refractDefs.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden;pointer-events:none';
+  // The whole look is done inside the filter (blur -> saturate -> displace), because Chrome drops CSS filter functions
+  // chained after a url() in backdrop-filter. Red / green / blue are displaced by slightly different amounts and added
+  // back together: the color split real glass shows at its rim.
+  const refractFilter = svgEl('filter', { id: 'am-refract', x: 0, y: 0, width: 1, height: 1,
+    'color-interpolation-filters': 'sRGB' }, svgEl('defs', {}, refractDefs));
+  const refractBlur = svgEl('feGaussianBlur', { in: 'SourceGraphic', stdDeviation: 28, edgeMode: 'duplicate', result: 'blur' }, refractFilter);
+  svgEl('feColorMatrix', { in: 'blur', type: 'saturate', values: 2, result: 'sat' }, refractFilter);
+  const refractMap = svgEl('feImage', { x: 0, y: 0, width: 1, height: 1, preserveAspectRatio: 'none', result: 'map' }, refractFilter);
+  const CHANNELS = [['r', 1, '1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'],
+                    ['g', 1.06, '0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0'],
+                    ['b', 1.12, '0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0']];
+  const refractDisps = CHANNELS.map(([c, k, m]) => {
+    const dm = svgEl('feDisplacementMap', { in: 'sat', in2: 'map', scale: 90, xChannelSelector: 'R', yChannelSelector: 'G',
+      result: 'd' + c }, refractFilter);
+    svgEl('feColorMatrix', { in: 'd' + c, type: 'matrix', values: m, result: 'c' + c }, refractFilter);
+    return [dm, k];
+  });
+  svgEl('feComposite', { in: 'cr', in2: 'cg', operator: 'arithmetic', k1: 0, k2: 1, k3: 1, k4: 0, result: 'rg' }, refractFilter);
+  svgEl('feComposite', { in: 'rg', in2: 'cb', operator: 'arithmetic', k1: 0, k2: 1, k3: 1, k4: 0 }, refractFilter);
+  document.body.append(refractDefs);
+
+  let refractKey = '';
+  const updateRefractMap = () => {
+    if (!settings.refract || !canRefract) return;
+    const w = Math.round(bar.offsetWidth), h = Math.round(bar.offsetHeight);
+    if (!w || !h) return;
+    const rad = Math.min(parseFloat(getComputedStyle(bar).borderTopLeftRadius) || 0, w / 2, h / 2);
+    const key = w + 'x' + h + 'r' + rad;
+    if (key === refractKey) return;                     // only redraw when the bar's shape changed
+    refractKey = key;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    const img = ctx.createImageData(w, h), d = img.data;
+    const edge = Math.max(8, Math.min(h * 0.6, 48));    // how far in from the rim the bending reaches
+    const hw = w / 2, hh = h / 2;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        // distance to the rounded-rect edge and the outward normal there
+        const px = x + 0.5 - hw, py = y + 0.5 - hh;
+        const qx = Math.abs(px) - (hw - rad), qy = Math.abs(py) - (hh - rad);
+        let dist, nx, ny;
+        if (qx > 0 && qy > 0) {
+          const l = Math.hypot(qx, qy) || 1;
+          dist = rad - l; nx = Math.sign(px) * qx / l; ny = Math.sign(py) * qy / l;
+        } else if (qx > qy) { dist = rad - qx; nx = Math.sign(px); ny = 0; }
+        else { dist = rad - qy; nx = 0; ny = Math.sign(py); }
+        const t = Math.max(0, 1 - Math.max(0, dist) / edge), f = Math.pow(t, 1.6);
+        // rim bend (sample inward, toward the center) + a faint convex lens over the whole surface
+        const lx = -px / hw * 0.12, ly = -py / hh * 0.22;
+        const vx = Math.max(-1, Math.min(1, -nx * f * 0.88 + lx));
+        const vy = Math.max(-1, Math.min(1, -ny * f * 0.88 + ly));
+        const i = (y * w + x) * 4;
+        d[i] = 128 + vx * 127;
+        d[i + 1] = 128 + vy * 127;
+        d[i + 2] = 128;
+        d[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    refractMap.setAttribute('width', w);
+    refractMap.setAttribute('height', h);
+    refractMap.setAttribute('href', c.toDataURL());
+  };
+  const applyRefraction = () => {
+    const on = !!settings.refract && canRefract;
+    document.documentElement.classList.toggle('am-refract', on);
+    for (const [dm, k] of refractDisps) dm.setAttribute('scale', String(Math.round(settings.refractStrength * k)));
+    refractBlur.setAttribute('stdDeviation', String(settings.barBlur));      // the bar blur, now done inside the filter
+    if (on) updateRefractMap();
+  };
+
   const loadSettings = () => {
     let saved = {};
     try { saved = JSON.parse(store.get('am-settings', '{}')) || {}; } catch {}
@@ -1186,9 +1284,11 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
   const settings = loadSettings();
   const applySettings = () => {
     for (const s of SETTINGS) {
+      if (!s.css) continue;
       const [name, value] = s.css(settings[s.key]);
       document.documentElement.style.setProperty(name, String(value));
     }
+    applyRefraction();
   };
   const saveSettings = () => store.set('am-settings', JSON.stringify(settings));
   applySettings();
@@ -1223,7 +1323,8 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     x.append(svg(P_CLOSE));
     x.addEventListener('click', closeSettings);
 
-    const ranges = [];
+    const ranges = [], deps = [];
+    const showDeps = () => deps.forEach(([row, dep]) => row.classList.toggle('am-set-dim', !settings[dep]));
     let section = null, lastGroup = '';
     for (const s of SETTINGS) {
       if (s.group !== lastGroup) {
@@ -1231,7 +1332,32 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
         el('div', 'am-set-group', p).textContent = s.group;
         section = el('div', 'am-set-card', p);
       }
+      if (s.type === 'toggle') {
+        const row = el('div', 'am-set-row am-set-inline', section);
+        const lt = el('div', 'am-set-ltext', row);
+        el('div', 'am-set-label', lt).textContent = s.label;
+        if (s.note) el('div', 'am-set-note', lt).textContent = s.note();
+        const sw = el('button', 'am-set-switch', row);
+        sw.setAttribute('role', 'switch');
+        sw.setAttribute('aria-label', s.label);
+        const show = () => {
+          sw.classList.toggle('am-on', !!settings[s.key]);
+          sw.setAttribute('aria-checked', String(!!settings[s.key]));
+          showDeps();
+        };
+        sw.addEventListener('click', () => {
+          settings[s.key] = settings[s.key] ? 0 : 1;
+          applySettings();
+          saveSettings();
+          show();
+        });
+        if (s.disabled && s.disabled()) { sw.disabled = true; sw.classList.add('am-set-off'); }
+        show();
+        ranges.push(show);
+        continue;
+      }
       const row = el('label', 'am-set-row', section);
+      if (s.dep) deps.push([row, s.dep]);
       const top = el('div', 'am-set-rowtop', row);
       el('span', 'am-set-label', top).textContent = s.label;
       const val = el('span', 'am-set-val', top);
@@ -1251,6 +1377,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
       show();
       ranges.push(show);
     }
+    showDeps();
     // bar layout (full / compact), in the size card
     const lay = el('div', 'am-set-row am-set-inline', section);
     el('span', 'am-set-label', lay).textContent = 'Bar layout';
@@ -1385,7 +1512,18 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     .am-set-range:hover::-webkit-slider-thumb, .am-set-range:focus-visible::-webkit-slider-thumb { scale: 1.15; }
     .am-set-range:focus-visible { box-shadow: 0 0 0 3px rgb(255 255 255 / .15); }
 
-    .am-set-inline { display: flex; align-items: center; justify-content: space-between; }
+    .am-set-inline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .am-set-ltext { min-width: 0; }
+    .am-set-note { font-size: 11.5px; color: rgb(255 255 255 / .45); margin-top: 2px; }
+    .am-set-dim { opacity: .4; pointer-events: none; transition: opacity .2s; }
+    .am-set-switch { all: unset; position: relative; flex-shrink: 0; cursor: pointer; width: 40px; height: 24px; border-radius: 12px;
+      background: rgb(255 255 255 / .18); transition: background .2s; }
+    .am-set-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%;
+      background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .4); transition: translate .22s cubic-bezier(.2, .8, .2, 1); }
+    .am-set-switch.am-on { background: #fa586a; }
+    .am-set-switch.am-on::after { translate: 16px 0; }
+    .am-set-switch:focus-visible { box-shadow: 0 0 0 3px rgb(255 255 255 / .2); }
+    .am-set-switch.am-set-off { opacity: .4; cursor: default; }
     .am-set-seg { display: flex; padding: 3px; border-radius: 10px; background: rgb(0 0 0 / .25); }
     .am-set-segbtn { all: unset; cursor: pointer; padding: 5px 12px; border-radius: 8px; font-size: 12.5px;
       color: rgb(255 255 255 / .7); transition: background .15s, color .15s; }
@@ -1414,6 +1552,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
   const timer = setInterval(() => {
     if (performance.now() > animatingUntil) hideBase();   // skip layout-heavy work mid-animation
     if (tick++ % 4 === 0) syncGuideEntry();               // sidebar entry: once a second is plenty
+    updateRefractMap();                                   // no-op unless refraction is on and the bar changed size
     watchPage();
     onPageState();
     bar.classList.toggle('am-hidden', isFullscreen());
@@ -1493,7 +1632,9 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     guideEl.remove();
     styleEl.remove();
     setStyle.remove();
-    for (const s of SETTINGS) document.documentElement.style.removeProperty(s.css(0)[0]);
+    for (const s of SETTINGS) if (s.css) document.documentElement.style.removeProperty(s.css(0)[0]);
+    document.documentElement.classList.remove('am-refract');
+    refractDefs.remove();
     document.documentElement.classList.remove('am-player-open', 'am-animating', 'am-fs', 'am-mini-hidden');
     document.querySelectorAll(`${MINI}, ytmusic-player-bar, #player-bar-background`).forEach(n => {
       n.style.removeProperty('opacity'); n.style.removeProperty('pointer-events');
