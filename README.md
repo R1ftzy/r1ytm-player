@@ -6,25 +6,33 @@ A floating, Apple Music style control bar for YouTube Music. Unofficial, and not
 
 Runs only on `https://music.youtube.com/*`. Needs no permissions. Plays nicely with the [Better Lyrics](https://github.com/better-lyrics/better-lyrics) extension. Works in Chrome (and Edge/Brave) and Firefox 140+.
 
-## Build
+## Install
 
-Windows:
+### Firefox (extension)
 
-```powershell
-pwsh -File extension/build.ps1
-```
+Install it from [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/r1ytm/) and click **Add to Firefox**. Needs Firefox 140 or newer (also works on Firefox for Android 142+).
 
-Linux / macOS (needs `zip`):
+### Developer mode (Chrome, Edge, Brave, or Firefox)
 
-```bash
-./extension/build.sh
-```
+Get the code (`git clone` or **Code > Download ZIP** on GitHub). The `extension` folder loads as it is.
 
-Output goes to `dist/` (chrome and firefox folders plus zips). Load `dist/r1ytm-chrome` unpacked in Chrome, or `dist/r1ytm-firefox/manifest.json` via `about:debugging`.
+**Chrome / Edge / Brave** (version 111 or newer):
 
-## Tampermonkey
+1. Open `chrome://extensions` (Edge: `edge://extensions`).
+2. Turn on **Developer mode**.
+3. Click **Load unpacked** and pick the `extension` folder.
 
-Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), create a new script, replace its contents with the code below and save.
+**Firefox** (version 140 or newer):
+
+1. Open `about:debugging#/runtime/this-firefox`.
+2. Click **Load Temporary Add-on** and pick `extension/manifest.json`.
+3. Firefox removes a temporary add-on when it closes, so repeat this after each restart. For a permanent install, use the Firefox Add-ons link above.
+
+After you update the code, click **Reload** on the extension.
+
+### Userscript (Any browser)
+
+Install [Tampermonkey](https://www.tampermonkey.net/) (or Violentmonkey), create a new script, replace its contents with the code below and save.
 
 <details>
 <summary>Userscript source</summary>
@@ -33,12 +41,15 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
 // ==UserScript==
 // @name         r1ytm
 // @namespace    r1ytm
-// @version      1.4.1
+// @version      1.4.2
 // @description  A floating, Apple Music-style control bar for YouTube Music.
 // @match        https://music.youtube.com/*
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
+// Apple Music-style bar for YouTube Music
+// Browser extension content script (Chrome + Firefox).
+// Injected on https://music.youtube.com/* only.
 (() => {
   'use strict';
 
@@ -318,7 +329,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     'ytmusic-player-page button, ytmusic-player-page tp-yt-paper-icon-button, ytmusic-player-page yt-icon-button, ytmusic-player-page [role="button"]')]
     .map(n => ({ n, r: n.getBoundingClientRect() }))
     .filter(({ n, r }) => r.width > 0 && r.height > 0 && r.top < 110 && r.left < 110 &&
-      !/mini ?player|playback|speed|menu|more/i.test(labelOf(n)))
+      !/mini ?player|playback|speed|menu|more|play|pause|like|volume|shuffle|repeat|next|previous/i.test(labelOf(n)))
     .sort((a, b) => (a.r.top + a.r.left) - (b.r.top + b.r.left))
     .map(x => x.n)[0];
   // `open` = the page is open now, so we want to close it. Known real elements (from YTM's own DOM):
@@ -329,7 +340,8 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
     const first = open
       ? ['ytmusic-player-page #collapse-button button', 'ytmusic-player-page #collapse-button', 'ytmusic-player-page .collapse-button']
       : ['ytmusic-player .player-maximize-button button', 'ytmusic-player .player-maximize-button'];
-    const desktop = [`${MINI} .ytmusicTrackInfoThumbnailWrapper`, `${MINI} ytmusic-track-info`]
+    // the miniplayer art / track info only ever opens the page; as a close target it can click play / pause instead
+    const desktop = open ? [] : [`${MINI} .ytmusicTrackInfoThumbnailWrapper`, `${MINI} ytmusic-track-info`]
       .map(sel => document.querySelector(sel)).filter(n => n && usable(n));
     const rest = open
       ? [findCollapse(), topLeftButton(), document.querySelector('ytmusic-player-bar .toggle-player-page-button')]
@@ -351,7 +363,7 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
       return;
     }
     const t = toggleTargets(open)[0];
-    if (t) t.click();
+    if (t) { console.log('[am-bar] toggle click target:', t); t.click(); }
     else console.warn('[am-bar] nothing to click to open/close the player page');
   };
   const isMobile = () => matchMedia('(max-width: 700px)').matches;
@@ -1681,3 +1693,21 @@ Prefer a userscript? Install [Tampermonkey](https://www.tampermonkey.net/), crea
 ```
 
 </details>
+
+## Sign and install your own build (Firefox)
+
+Release Firefox only installs signed add-ons. To sign your own copy:
+
+1. Create API keys at [addons.mozilla.org/developers/addon/api/key](https://addons.mozilla.org/en-US/developers/addon/api/key/) (needs a free Firefox account).
+2. Sign it as an unlisted add-on (needs Node.js):
+
+   ```bash
+   npx web-ext sign --channel=unlisted \
+     --source-dir extension \
+     --api-key=<JWT issuer> --api-secret=<JWT secret>
+   ```
+
+3. Take the signed `.xpi` from `web-ext-artifacts/`.
+4. Install it: drag the `.xpi` into Firefox, or open `about:addons`, click the gear, choose **Install Add-on From File** and pick the file.
+
+Each signing needs a new `version` in `extension/manifest.json`. AMO rejects a version it has already seen.

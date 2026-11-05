@@ -280,7 +280,7 @@
     'ytmusic-player-page button, ytmusic-player-page tp-yt-paper-icon-button, ytmusic-player-page yt-icon-button, ytmusic-player-page [role="button"]')]
     .map(n => ({ n, r: n.getBoundingClientRect() }))
     .filter(({ n, r }) => r.width > 0 && r.height > 0 && r.top < 110 && r.left < 110 &&
-      !/mini ?player|playback|speed|menu|more/i.test(labelOf(n)))
+      !/mini ?player|playback|speed|menu|more|play|pause|like|volume|shuffle|repeat|next|previous/i.test(labelOf(n)))
     .sort((a, b) => (a.r.top + a.r.left) - (b.r.top + b.r.left))
     .map(x => x.n)[0];
   // `open` = the page is open now, so we want to close it. Known real elements (from YTM's own DOM):
@@ -291,7 +291,8 @@
     const first = open
       ? ['ytmusic-player-page #collapse-button button', 'ytmusic-player-page #collapse-button', 'ytmusic-player-page .collapse-button']
       : ['ytmusic-player .player-maximize-button button', 'ytmusic-player .player-maximize-button'];
-    const desktop = [`${MINI} .ytmusicTrackInfoThumbnailWrapper`, `${MINI} ytmusic-track-info`]
+    // the miniplayer art / track info only ever opens the page; as a close target it can click play / pause instead
+    const desktop = open ? [] : [`${MINI} .ytmusicTrackInfoThumbnailWrapper`, `${MINI} ytmusic-track-info`]
       .map(sel => document.querySelector(sel)).filter(n => n && usable(n));
     const rest = open
       ? [findCollapse(), topLeftButton(), document.querySelector('ytmusic-player-bar .toggle-player-page-button')]
@@ -313,7 +314,7 @@
       return;
     }
     const t = toggleTargets(open)[0];
-    if (t) t.click();
+    if (t) { console.log('[am-bar] toggle click target:', t); t.click(); }
     else console.warn('[am-bar] nothing to click to open/close the player page');
   };
   const isMobile = () => matchMedia('(max-width: 700px)').matches;

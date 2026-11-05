@@ -1,6 +1,3 @@
-# build output (regenerate with extension/build.ps1)
-dist/
-
 # OS / editor
 .DS_Store
 Thumbs.db
