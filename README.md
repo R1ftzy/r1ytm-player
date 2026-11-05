@@ -14,6 +14,11 @@
   <br><b>Settings</b>: glass, size, font and background &nbsp;·&nbsp; <b>Gradient maker</b>: paint light, then add effects
 </p>
 
+<p align="center">
+  <img src="docs/bar.png" alt="The floating bar with the easy progress bar: thicker with a knob while you point at it" width="99%">
+  <br><b>The bar</b>: Usable ahh progress bar (on hover).
+</p>
+
 Runs only on `https://music.youtube.com/*`. Needs no permissions. Works in Chrome (and Edge/Brave) and Firefox 140+.
 
 ## Features
@@ -64,7 +69,7 @@ Install [Tampermonkey](https://www.tampermonkey.net/) (or Violentmonkey), create
 // ==UserScript==
 // @name         r1ytm
 // @namespace    r1ytm
-// @version      1.5.0
+// @version      1.5.1
 // @description  A floating, Apple Music-style control bar for YouTube Music.
 // @match        https://music.youtube.com/*
 // @grant        none
@@ -1022,6 +1027,18 @@ Install [Tampermonkey](https://www.tampermonkey.net/) (or Violentmonkey), create
       background: rgb(255 255 255 / .15); }
     .am-fill { position: absolute; left: 0; top: 3px; height: 3px; width: 0; border-radius: 2px;
       background: rgb(255 255 255 / .75); }
+    .am-track { touch-action: none; }
+
+    /* easy progress bar: thicker with a knob while pointed at or dragged; a slightly taller (invisible) hover area */
+    html.am-easy-track .am-track::after { content: ""; position: absolute; inset: -4px 0 -2px; }
+    html.am-easy-track .am-track::before { transition: inset .18s ease, border-radius .18s ease, background .18s ease; }
+    html.am-easy-track .am-fill { transition: top .18s ease, height .18s ease, border-radius .18s ease, background .18s ease; }
+    html.am-easy-track .am-track:is(:hover, .am-drag)::before { inset: 0; border-radius: 5px; background: rgb(255 255 255 / .22); }
+    html.am-easy-track .am-track:is(:hover, .am-drag) .am-fill { top: 0; height: 9px; border-radius: 5px; background: #fff; }
+    html.am-easy-track .am-fill::after { content: ""; position: absolute; right: -7px; top: 50%; width: 14px; height: 14px;
+      border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgb(0 0 0 / .45); translate: 0 -50%; scale: 0;
+      transition: scale .18s ease; }
+    html.am-easy-track .am-track:is(:hover, .am-drag) .am-fill::after { scale: 1; }
 
     /* idle state: nothing playing -> centered logo */
     .am-logo { display: none; margin: 0 auto; }
@@ -1104,13 +1121,37 @@ Install [Tampermonkey](https://www.tampermonkey.net/) (or Violentmonkey), create
   btn(lcd, 'more', b => openMenu(b), 'am-lcd-btn am-lcd-more');
   const track = el('div', 'am-track', lcd);
   const fill = el('div', 'am-fill', track);
-  track.addEventListener('click', e => {
-    e.stopPropagation();
+  // click or drag to seek. While dragging only the fill follows the pointer; the song seeks once, on release
+  let seeking = null;            // the position (0..1) being dragged to, null when not dragging
+  const trackPos = e => {
+    const r = track.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  };
+  track.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
     const v = video();
     if (!v || !v.duration) return;
-    const r = track.getBoundingClientRect();
-    v.currentTime = ((e.clientX - r.left) / r.width) * v.duration;
+    e.stopPropagation();
+    track.setPointerCapture(e.pointerId);
+    track.classList.add('am-drag');
+    seeking = trackPos(e);
+    fill.style.width = seeking * 100 + '%';
   });
+  track.addEventListener('pointermove', e => {
+    if (seeking === null) return;
+    seeking = trackPos(e);
+    fill.style.width = seeking * 100 + '%';
+  });
+  const endSeek = commit => {
+    if (seeking === null) return;
+    const v = video();
+    if (commit && v && v.duration) v.currentTime = seeking * v.duration;
+    seeking = null;
+    track.classList.remove('am-drag');
+  };
+  track.addEventListener('pointerup', () => endSeek(true));
+  track.addEventListener('pointercancel', () => endSeek(false));
+  track.addEventListener('click', e => e.stopPropagation());     // a click here must not open the player page
 
   /* ---------- clickable title / artists / album ---------- */
   let albumIdx = -1;      // index of the album link in YTM's byline, -1 if none
@@ -1217,6 +1258,8 @@ Install [Tampermonkey](https://www.tampermonkey.net/) (or Violentmonkey), create
       css: v => ['--am-size', v / 100] },
     { group: 'Size', key: 'menuSize', label: 'Menu size', min: 85, max: 125, step: 5, def: 100, unit: '%',
       css: v => ['--am-menu-size', v / 100] },
+    { group: 'Size', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
+      note: () => 'Grows when you point at it, easier to drag' },
   ];
   /* refraction ("liquid glass"): an SVG displacement filter in the bar's backdrop-filter. The map is drawn for the bar's
      exact size and rounded shape: near the edge every pixel samples the background a little further inside, so it
@@ -1323,6 +1366,7 @@ Install [Tampermonkey](https://www.tampermonkey.net/) (or Violentmonkey), create
       const [name, value] = s.css(settings[s.key]);
       document.documentElement.style.setProperty(name, String(value));
     }
+    document.documentElement.classList.toggle('am-easy-track', !!settings.easyTrack);
     applyRefraction();
   };
   const saveSettings = () => store.set('am-settings', JSON.stringify(settings));
@@ -2469,7 +2513,7 @@ Install [Tampermonkey](https://www.tampermonkey.net/) (or Violentmonkey), create
 
     const v = video();
     if (v) {
-      fill.style.width = (v.duration ? (v.currentTime / v.duration) * 100 : 0) + '%';
+      if (seeking === null) fill.style.width = (v.duration ? (v.currentTime / v.duration) * 100 : 0) + '%';
       if (v.paused !== wasPaused) {
         wasPaused = v.paused;
         play.replaceChildren(svg(v.paused ? P.play : P.pause));
@@ -2513,7 +2557,7 @@ Install [Tampermonkey](https://www.tampermonkey.net/) (or Violentmonkey), create
     styleEl.remove();
     setStyle.remove();
     for (const s of SETTINGS) if (s.css) document.documentElement.style.removeProperty(s.css(0)[0]);
-    document.documentElement.classList.remove('am-refract');
+    document.documentElement.classList.remove('am-refract', 'am-easy-track');
     refractDefs.remove();
     document.documentElement.classList.remove('am-player-open', 'am-animating', 'am-fs', 'am-mini-hidden');
     document.querySelectorAll(`${MINI}, ytmusic-player-bar, #player-bar-background`).forEach(n => {
