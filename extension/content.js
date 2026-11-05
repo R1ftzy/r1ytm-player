@@ -1296,6 +1296,7 @@
   applySettings();
 
   const P_TUNE = 'M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z';
+  const P_CHEVRON = 'M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z';
   const P_CLOSE = 'M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z';
 
   let setEl = null;
@@ -1405,7 +1406,9 @@
       ranges.forEach(f => f());
       showSeg();
       // font / background back to default; the saved font file, image and gradient stay and can be picked again
-      Object.assign(look, { font: 'default', fontScope: 'all', bg: 'default', bgDim: 25, bgBlur: 0, bgPlayer: 1 });
+      Object.assign(look, { font: 'default', fontScope: 'all', bg: 'default', bgDim: 25, bgBlur: 0, bgPlayer: 1, dimPages: {}, blurPages: {}, hideBanner: 0, artistHead: 'banner', noArtistShade: 0 });
+      applyBanner();
+      applyArtist();
       saveLook();
       applyFont();
       applyBg();
@@ -1607,7 +1610,8 @@
   })();
 
   const LOOK_DEF = { font: 'default', fontName: '', fontFile: '', fontScope: 'all',
-    bg: 'default', bgColor: '#1d1430', bgDim: 25, bgBlur: 0, bgPlayer: 1, bgImageName: '', grad: null };
+    bg: 'default', bgColor: '#1d1430', bgDim: 25, bgBlur: 0, bgPlayer: 1, bgImageName: '', grad: null,
+    dimPages: {}, blurPages: {}, hideBanner: 0, artistHead: 'banner', noArtistShade: 0 };
   const look = (() => {
     let s = {};
     try { s = JSON.parse(store.get('am-look', '{}')) || {}; } catch {}
@@ -1682,9 +1686,30 @@
   const bgImg = el('div', 'am-bg-img', bgLayer);
   let bgUrl = null, bgRun = 0;
   const cleared = new Set();
+  // which kind of page is showing (from the address; the player page wins while it is open)
+  const PAGES = [['home', 'Home'], ['explore', 'Explore'], ['library', 'Library'], ['album', 'Albums'],
+    ['playlist', 'Playlists'], ['artist', 'Artists'], ['search', 'Search'], ['player', 'Player page']];
+  const pageKey = () => {
+    if (stateOpen()) return 'player';
+    const p = location.pathname;
+    if (p === '/' || p === '/home') return 'home';
+    if (p.startsWith('/explore') || /FEmusic_(explore|moods|new_releases|charts)/.test(p)) return 'explore';
+    if (p.startsWith('/library') || /FEmusic_(library|liked)/.test(p)) return 'library';
+    if (/^\/browse\/MPRE/.test(p)) return 'album';
+    if (p.startsWith('/playlist') || /^\/browse\/VL/.test(p)) return 'playlist';
+    // artist pages: /channel/UC…, /browse/UC… or a handle like /@dojacat
+    if (p.startsWith('/channel/') || p.startsWith('/@') || /^\/browse\/UC/.test(p)) return 'artist';
+    if (p.startsWith('/search')) return 'search';
+    return 'other';
+  };
+  let curPage = pageKey();
+  // a page's own dim, or the main Dim when that page has none
+  const dimFor = k => { const v = (look.dimPages || {})[k]; return Number.isFinite(v) ? v : look.bgDim; };
+  const blurFor = k => { const v = (look.blurPages || {})[k]; return Number.isFinite(v) ? v : look.bgBlur; };
+  const applyBanner = () => html.classList.toggle('am-hide-banner', !!look.hideBanner);
   const applyBgVars = () => {
-    html.style.setProperty('--am-bg-dim', String(look.bg === 'color' ? 0 : look.bgDim / 100));
-    html.style.setProperty('--am-bg-blur', (look.bg === 'color' ? 0 : look.bgBlur) + 'px');
+    html.style.setProperty('--am-bg-dim', String(look.bg === 'color' ? 0 : dimFor(curPage) / 100));
+    html.style.setProperty('--am-bg-blur', (look.bg === 'color' ? 0 : blurFor(curPage)) + 'px');
   };
   const restoreCleared = () => {
     for (const n of cleared) { n.style.removeProperty('background-color'); n.style.removeProperty('box-shadow'); }
@@ -1695,6 +1720,59 @@
     if (!n || n.length < 3) return false;
     const a = n.length > 3 ? +n[3] : 1;
     return a > 0.05 && (+n[0] + +n[1] + +n[2]) / 3 < 48;
+  };
+  /* artist pages: the header can show the banner, a round profile picture above the name, both or neither,
+     and its dark shadow can go */
+  const artistHeader = () => document.querySelector('ytmusic-browse-response ytmusic-immersive-header-renderer, ' +
+    'ytmusic-browse-response ytmusic-visual-header-renderer');
+  // the artist's picture: from YTM's own data for the header, else from the banner image; asked square from Google's server
+  const artistPicture = h => {
+    let u = '';
+    try {
+      const d = h.data || (h.__data && h.__data.data) || {};
+      const th = (((d.thumbnail || {}).musicThumbnailRenderer || {}).thumbnail || {}).thumbnails || [];
+      if (th.length) u = th[th.length - 1].url;
+    } catch {}
+    if (!u) { const i = [...h.querySelectorAll('img')].find(i => /^https?:/.test(i.src)); if (i) u = i.src; }
+    return u && u.replace(/=w\d+-h\d+[^/]*$/, '=w544-h544-p-l90-rj');
+  };
+  let pfpEl = null;
+  const shaded = new Set();
+  const clearShade = () => {
+    for (const n of shaded) { n.classList.remove('am-noshade'); n.style.removeProperty('background-color'); }
+    shaded.clear();
+  };
+  const syncArtist = () => {
+    const onArtist = curPage === 'artist';
+    const h = onArtist && artistHeader();
+    // profile picture above the name
+    const wantPic = h && (look.artistHead === 'picture' || look.artistHead === 'both');
+    const titleEl = wantPic && (h.querySelector('h1') || h.querySelector('.title'));
+    const src = titleEl && artistPicture(h);
+    if (src) {
+      if (!pfpEl) { pfpEl = el('img', 'am-artist-pfp'); pfpEl.alt = ''; }
+      if (pfpEl.getAttribute('src') !== src) pfpEl.src = src;
+      if (pfpEl.nextElementSibling !== titleEl) titleEl.before(pfpEl);
+    } else if (pfpEl) { pfpEl.remove(); pfpEl = null; }
+    // shadow: gradients and dark see-through fills on the header's big parts (not its buttons)
+    if (!h || !look.noArtistShade) { if (shaded.size) clearShade(); return; }
+    for (const n of [h, ...h.querySelectorAll('*')]) {
+      if (shaded.has(n) || n === pfpEl || n.closest('button, a, yt-button-shape, yt-button-renderer, ytmusic-subscribe-button-renderer, svg')) continue;
+      if (n.getBoundingClientRect().width < 300) continue;
+      let hit = false;
+      for (const ps of [null, '::before', '::after']) {
+        const bi = getComputedStyle(n, ps).backgroundImage;
+        if (/gradient\(/.test(bi) && !/url\(/.test(bi)) hit = true;
+      }
+      if (darkOpaque(getComputedStyle(n).backgroundColor)) { n.style.setProperty('background-color', 'transparent', 'important'); hit = true; }
+      if (hit) { n.classList.add('am-noshade'); shaded.add(n); }
+    }
+  };
+  const applyArtist = () => {
+    html.classList.toggle('am-artist-nobanner', look.artistHead === 'picture' || look.artistHead === 'none');
+    html.classList.toggle('am-artist-noshade', !!look.noArtistShade);
+    clearShade();
+    syncArtist();
   };
   // Every second: anything big with a dark fill or a shadow under a grid of points (page, sidebar, player page) goes transparent.
   // Measured instead of a fixed selector list because YTM's layouts differ between accounts.
@@ -1772,7 +1850,7 @@
   /* settings controls (shared by the settings panel and the gradient maker) */
   const ui = {
     row: (parent, cls) => el('div', 'am-set-row' + (cls ? ' ' + cls : ''), parent),
-    range(parent, label, min, max, step, unit, get, set) {
+    range(parent, label, min, max, step, unit, get, set, fmt) {
       const row = el('label', 'am-set-row', parent);
       const top = el('div', 'am-set-rowtop', row);
       el('span', 'am-set-label', top).textContent = label;
@@ -1782,7 +1860,7 @@
       const show = () => {
         const v = get();
         r.value = String(v);
-        val.textContent = v + unit;
+        val.textContent = fmt ? fmt(v) : v + unit;
         r.style.setProperty('--p', ((v - min) / (max - min) * 100) + '%');
       };
       r.addEventListener('input', () => { set(+r.value); show(); });
@@ -1933,10 +2011,10 @@
         renderBg();
       }, 'am-set-wide');
     const bBody = el('div', 'am-set-sub', bCard);
+    let perPageOpen = false, renderPerPage = () => {};
     const renderBg = () => {
       bBody.replaceChildren();
       bNote = null;
-      if (look.bg === 'default') return;
       if (look.bg === 'color') {
         const row = ui.row(bBody, 'am-set-inline');
         el('span', 'am-set-label', row).textContent = 'Color';
@@ -1953,10 +2031,55 @@
         }
         bNote = el('div', 'am-set-note', row);
         if (look.bg === 'image' && /\.(gif|webp)$/i.test(look.bgImageName)) bNote.textContent = 'Animated images use more battery, more so with blur';
-        ui.range(bBody, 'Dim', 0, 90, 1, '%', () => look.bgDim, v => { look.bgDim = v; applyBgVars(); saveLook(); });
-        ui.range(bBody, 'Blur', 0, 40, 1, 'px', () => look.bgBlur, v => { look.bgBlur = v; applyBgVars(); saveLook(); });
+        ui.range(bBody, 'Dim', 0, 100, 1, '%', () => look.bgDim, v => { look.bgDim = v; applyBgVars(); saveLook(); renderPerPage(); });
+        ui.range(bBody, 'Blur', 0, 40, 1, 'px', () => look.bgBlur, v => { look.bgBlur = v; applyBgVars(); saveLook(); renderPerPage(); });
+        // dim and blur per kind of page, folded away by default
+        const dRow = ui.row(bBody);
+        const dHead = el('button', 'am-set-disclose', dRow);
+        el('span', 'am-set-label', dHead).textContent = 'Dim and blur per page';
+        dHead.append(svg(P_CHEVRON));
+        const dBox = el('div', 'am-set-perpage', dRow);
+        const showOpen = () => { dHead.setAttribute('aria-expanded', String(perPageOpen)); dBox.hidden = !perPageOpen; };
+        dHead.addEventListener('click', () => { perPageOpen = !perPageOpen; showOpen(); });
+        renderPerPage = () => {
+          dBox.replaceChildren();
+          el('div', 'am-set-note', dBox).textContent = 'Pages you leave alone use the main Dim and Blur.';
+          for (const [k, label] of PAGES) {
+            el('div', 'am-set-pagehead', dBox).textContent = label + (k === curPage ? ' (this page)' : '');
+            ui.range(dBox, 'Dim', 0, 100, 1, '%', () => dimFor(k), v => {
+              look.dimPages = Object.assign({}, look.dimPages, { [k]: v });
+              if (k === curPage) applyBgVars();
+              saveLook();
+            }, v => (k in (look.dimPages || {}) ? '' : 'main · ') + v + '%');
+            ui.range(dBox, 'Blur', 0, 40, 1, 'px', () => blurFor(k), v => {
+              look.blurPages = Object.assign({}, look.blurPages, { [k]: v });
+              if (k === curPage) applyBgVars();
+              saveLook();
+            }, v => (k in (look.blurPages || {}) ? '' : 'main · ') + v + 'px');
+          }
+          ui.button(el('div', 'am-set-row', dBox), 'Use the main Dim and Blur everywhere', () => {
+            look.dimPages = {};
+            look.blurPages = {};
+            applyBgVars();
+            saveLook();
+            renderPerPage();
+          });
+        };
+        renderPerPage();
+        showOpen();
       }
-      ui.toggle(bBody, 'Behind the player page', () => look.bgPlayer, v => { look.bgPlayer = v; saveLook(); applyBg(); });
+      if (look.bg !== 'default') {
+        ui.toggle(bBody, 'Behind the player page', () => look.bgPlayer, v => { look.bgPlayer = v; saveLook(); applyBg(); });
+      }
+      // works with any background, also YTM's own
+      ui.toggle(bBody, 'Hide page banners', () => look.hideBanner, v => { look.hideBanner = v; saveLook(); applyBanner(); });
+      // artist pages have their own header settings
+      el('div', 'am-set-pagehead am-set-pagehead-card', bBody).textContent = 'Artist pages';
+      const aRow = ui.row(bBody);
+      el('div', 'am-set-label am-set-rowlabel', aRow).textContent = 'Header';
+      ui.seg(aRow, [['Banner', 'banner'], ['Picture', 'picture'], ['Both', 'both'], ['None', 'none']], () => look.artistHead,
+        v => { look.artistHead = v; saveLook(); applyArtist(); }, 'am-set-wide');
+      ui.toggle(bBody, 'Remove header shadow', () => look.noArtistShade, v => { look.noArtistShade = v; saveLook(); applyArtist(); });
     };
     renderBg();
     return () => { fSeg(); renderFont(); bSeg(); renderBg(); };
@@ -2336,7 +2459,28 @@
     html.am-bg-on, html.am-bg-on body { background: transparent !important; }
     /* YTM's page fade: a gradient from 60% black to solid #030303 over the whole page (Home, Explore, artist pages...) */
     html.am-bg-on ytmusic-browse-response .background-gradient { background: none !important; }
+    /* YTM's page banner: the big picture (or blurred cover art) behind the top of Home, album and playlist pages.
+       Artist pages follow their own setting (banner / picture / both / none). */
+    html.am-hide-banner:not(.am-page-artist) ytmusic-browse-response #background,
+    html.am-hide-banner:not(.am-page-artist) ytmusic-browse-response ytmusic-fullbleed-thumbnail-renderer,
+    html.am-page-artist.am-artist-nobanner ytmusic-browse-response #background,
+    html.am-page-artist.am-artist-nobanner ytmusic-browse-response ytmusic-fullbleed-thumbnail-renderer { display: none !important; }
+    .am-noshade, .am-noshade::before, .am-noshade::after { background-image: none !important; box-shadow: none !important; }
+    /* the artist header's shadow: YTM's .gradient-container (a dark fade behind the name and buttons) */
+    html.am-artist-noshade ytmusic-immersive-header-renderer .gradient-container,
+    html.am-artist-noshade ytmusic-immersive-header-renderer .gradient-container::before,
+    html.am-artist-noshade ytmusic-immersive-header-renderer .gradient-container::after,
+    html.am-artist-noshade ytmusic-immersive-header-renderer .content-container-wrapper {
+      background: none !important; box-shadow: none !important; }
+    .am-artist-pfp { display: block; width: 136px; height: 136px; margin: 0 0 18px; border-radius: 50%; object-fit: cover;
+      box-shadow: 0 10px 34px rgb(0 0 0 / .45); background: rgb(255 255 255 / .08); }
+    .am-bg::after { transition: background .35s ease; }
+    .am-bg-img { transition: filter .35s ease, inset .35s ease; }
     html.am-bg-on #nav-bar-background { background: rgb(0 0 0 / .3) !important;
+      backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); }
+    /* search page tab strip (YT Music / Library / Uploads): see-through; glass like the top bar while it sticks */
+    html.am-bg-on ytmusic-tabs { background: transparent !important; box-shadow: none !important; }
+    html.am-bg-on ytmusic-tabs.stuck { background: rgb(0 0 0 / .3) !important;
       backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); }
 
     /* settings controls */
@@ -2360,6 +2504,18 @@
     .am-set-color::-webkit-color-swatch { border: none; border-radius: 8px; }
     .am-set-color::-moz-color-swatch { border: none; border-radius: 8px; }
     .am-set-note:empty { display: none; }
+    .am-set-disclose { all: unset; box-sizing: border-box; cursor: pointer; display: flex; width: 100%;
+      align-items: center; justify-content: space-between; }
+    .am-set-disclose svg { width: 20px; height: 20px; fill: rgb(255 255 255 / .6); transition: rotate .2s ease; }
+    .am-set-disclose[aria-expanded="true"] svg { rotate: 180deg; }
+    .am-set-perpage { margin-top: 10px; padding: 4px 12px; border-radius: 10px; background: rgb(0 0 0 / .18); }
+    .am-set-perpage[hidden] { display: none; }
+    .am-set-perpage > .am-set-note { margin: 8px 0 2px; }
+    .am-set-pagehead { margin: 14px 0 0; font-size: 11.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+      color: rgb(255 255 255 / .5); }
+    .am-set-pagehead + .am-set-row { border-top: none; }
+    .am-set-pagehead-card { padding-top: 12px; border-top: 1px solid rgb(255 255 255 / .07); margin-top: 0; }
+    .am-set-rowlabel { margin-bottom: 9px; }
     .am-set-row > .am-set-note { margin-top: 6px; }
 
     /* gradient maker */
@@ -2385,6 +2541,9 @@
     .am-gm-tools { display: flex; flex-wrap: wrap; gap: 6px; }
   `;
   applyFont();
+  applyBanner();
+  html.classList.add('am-page-' + curPage);
+  applyArtist();
   applyBg();
 
   // react to fullscreen immediately (the loop below also checks)
@@ -2399,6 +2558,15 @@
     if (performance.now() > animatingUntil) hideBase();   // skip layout-heavy work mid-animation
     if (tick++ % 4 === 0) syncGuideEntry();               // sidebar entry: once a second is plenty
     if (tick % 4 === 2 && performance.now() > animatingUntil) sweepBg();   // custom background: clear new page backgrounds
+    const pk = pageKey();                                 // another kind of page: its own dim / blur / header
+    if (pk !== curPage) {
+      html.classList.remove('am-page-' + curPage);
+      curPage = pk;
+      html.classList.add('am-page-' + curPage);
+      applyBgVars();
+      clearShade();
+    }
+    if (tick % 4 === 1 && curPage === 'artist') syncArtist();
     updateRefractMap();                                   // no-op unless refraction is on and the bar changed size
     watchPage();
     onPageState();
@@ -2496,7 +2664,9 @@
     lookStyle.remove();
     googleStyle.remove();
     if (fileFace) document.fonts.delete(fileFace);
-    html.classList.remove('am-bg-on', 'am-font-all');
+    html.classList.remove('am-bg-on', 'am-font-all', 'am-hide-banner', 'am-artist-nobanner', 'am-artist-noshade', 'am-page-' + curPage);
+    if (pfpEl) pfpEl.remove();
+    clearShade();
     for (const v of ['--am-font', '--am-bg-dim', '--am-bg-blur']) html.style.removeProperty(v);
     console.log('[am-bar] off: bar, styles and inline overrides removed');
   };
