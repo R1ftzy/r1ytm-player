@@ -9,6 +9,7 @@ desktop.ini
 node_modules/
 web-ext-artifacts/
 *.xpi
+*.zip
 *.log
 
 # local-only Tampermonkey userscript
