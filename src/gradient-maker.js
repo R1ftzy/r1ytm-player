@@ -361,7 +361,7 @@
   const lookStyle = el('style', null, document.head);
   lookStyle.textContent = `
     /* custom font for all of YT Music (icons are SVG, so nothing else needs to keep its font) */
-    html.am-font-all body, html.am-font-all body *:not(svg, svg *) { font-family: var(--am-font) !important; }
+    html.am-font-all body, html.am-font-all body *:not(svg, svg *, .am-zen, .am-zen *) { font-family: var(--am-font) !important; }
 
     /* custom background */
     .am-bg { position: fixed; inset: 0; z-index: -1; display: none; overflow: hidden; pointer-events: none; background: #000; }

@@ -196,7 +196,7 @@
         if (seen.has(n) || n === html || n === document.body) continue;
         seen.add(n);
         if (cleared.has(n)) continue;
-        if (n.closest('.am-bar, .am-menu, .am-set-back, .am-gm, .am-bg, ytmusic-player, tp-yt-iron-dropdown, tp-yt-paper-dialog')) continue;
+        if (n.closest('.am-bar, .am-menu, .am-set-back, .am-gm, .am-bg, .am-zen, ytmusic-player, tp-yt-iron-dropdown, tp-yt-paper-dialog')) continue;
         if (!look.bgPlayer && n.closest('ytmusic-player-page')) continue;
         const r = n.getBoundingClientRect();
         if (!(r.height >= innerHeight * 0.5 || (r.width >= innerWidth * 0.5 && r.height >= innerHeight * 0.25))) continue;

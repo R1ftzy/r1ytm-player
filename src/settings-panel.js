@@ -271,22 +271,24 @@
   // is plain markup that copies the computed look of a real (inactive) entry next to it. YTM keeps more than one guide
   // (the expanded one and the collapsed / mini one, which can sit off-screen while "visible"), so every primary
   // section gets its own entry, each styled after its own neighbours.
-  const makeGuideEntry = () => {
+  // more entries (e.g. Zen) are added to GUIDE by later files; they show in this order, after YTM's own entries
+  const GUIDE = [{ label: 'r1ytm', tip: 'r1ytm settings', icon: P_TUNE, open: () => openSettings() }];
+  const makeGuideEntry = spec => {
     const g = el('div', 'am-guide');
     g.setAttribute('role', 'link');
     g.tabIndex = 0;
-    g.title = 'r1ytm settings';
+    g.title = spec.tip;
     const item = el('div', 'am-guide-item', g);
     const icon = el('span', 'am-guide-icon', item);
-    icon.append(svg(P_TUNE));
+    icon.append(svg(spec.icon));
     const col = el('div', 'am-guide-col', item);
     const ttl = el('span', 'am-guide-title', col);
-    ttl.textContent = 'r1ytm';
-    g.addEventListener('click', e => { e.stopPropagation(); openSettings(); });
-    g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSettings(); } });
+    ttl.textContent = spec.label;
+    g.addEventListener('click', e => { e.stopPropagation(); spec.open(); });
+    g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); spec.open(); } });
     return { g, item, icon, col, ttl };
   };
-  const guideEntries = new Map();      // a guide section's #items -> our entry in it
+  const guideEntries = new Map();      // a guide section's #items -> our entries in it (one per GUIDE item)
 
   const copyCss = (from, to, props) => {
     if (!from) return;
@@ -299,37 +301,42 @@
   const TEXT = ['font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing', 'color', 'text-align',
     'white-space', 'overflow', 'text-overflow', 'display', 'margin-top', 'margin-left', 'max-width'];
   const syncGuideEntry = () => {
-    for (const [items, e] of guideEntries) if (!items.isConnected) { e.g.remove(); guideEntries.delete(items); }
+    for (const [items, list] of guideEntries) if (!items.isConnected) { list.forEach(e => e.g.remove()); guideEntries.delete(items); }
     for (const items of document.querySelectorAll('ytmusic-guide-section-renderer[is-primary] #items')) {
       const ref = items.querySelector('ytmusic-guide-entry-renderer:not([active])') ||
         items.querySelector('ytmusic-guide-entry-renderer');
       if (!ref) continue;
-      let e = guideEntries.get(items);
-      if (!e) { e = makeGuideEntry(); guideEntries.set(items, e); }
-      if (e.g.parentNode !== items || e.g.nextElementSibling) items.append(e.g);   // keep it last
-      // a hidden guide has nothing to copy (display: none all the way down); it is restyled once it shows
-      if (!shown(ref)) continue;
-      // collapsed sidebar: YTM stacks icon over label; its own layout doesn't carry over by copying, so ours is done in
-      // CSS (.am-collapsed) and only sizes, font, colors and the icon-to-label gap are copied
-      const collapsed = ref.hasAttribute('is-collapsed') || !!items.closest('[is-collapsed]');
-      e.g.classList.toggle('am-collapsed', collapsed);
-      for (const n of [e.g, e.item, e.icon, e.col, e.ttl]) n.style.cssText = '';     // nothing stale from the other mode
-      const rItem = ref.querySelector('tp-yt-paper-item'), rIcon = ref.querySelector('yt-icon'), rTitle = ref.querySelector('.title');
-      copyCss(ref, e.g, ['display', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-left', 'padding-right']);
-      copyCss(rIcon, e.icon, ['width', 'height', 'color', 'flex-shrink'].concat(collapsed ? [] : ['margin-top', 'margin-right', 'margin-bottom', 'margin-left']));
-      if (collapsed) {
-        copyCss(rItem, e.item, ['box-sizing', 'width', 'height', 'min-height', 'border-radius', 'padding-top', 'padding-bottom',
-          'margin-top', 'margin-right', 'margin-bottom', 'margin-left']);
-        copyCss(rTitle, e.ttl, ['font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing', 'color']);
-        if (rIcon && rTitle) {
-          const gap = rTitle.getBoundingClientRect().top - rIcon.getBoundingClientRect().bottom;
-          e.item.style.rowGap = Math.max(0, Math.round(gap)) + 'px';
-        }
-      } else {
-        copyCss(rItem, e.item, BOX);
-        copyCss(ref.querySelector('.title-column'), e.col, BOX.filter(pr => !/^(width|height|min-height)$/.test(pr)));
-        copyCss(rTitle, e.ttl, TEXT);
+      let list = guideEntries.get(items);
+      if (!list) { list = GUIDE.map(makeGuideEntry); guideEntries.set(items, list); }
+      // keep ours last, in GUIDE order
+      const tail = [...items.children].slice(-list.length);
+      if (list.some((e, i) => tail[i] !== e.g)) items.append(...list.map(e => e.g));
+      for (const e of list) styleGuideEntry(e, ref, items);
+    }
+  };
+  const styleGuideEntry = (e, ref, items) => {
+    // a hidden guide has nothing to copy (display: none all the way down); it is restyled once it shows
+    if (!shown(ref)) return;
+    // collapsed sidebar: YTM stacks icon over label; its own layout doesn't carry over by copying, so ours is done in
+    // CSS (.am-collapsed) and only sizes, font, colors and the icon-to-label gap are copied
+    const collapsed = ref.hasAttribute('is-collapsed') || !!items.closest('[is-collapsed]');
+    e.g.classList.toggle('am-collapsed', collapsed);
+    for (const n of [e.g, e.item, e.icon, e.col, e.ttl]) n.style.cssText = '';     // nothing stale from the other mode
+    const rItem = ref.querySelector('tp-yt-paper-item'), rIcon = ref.querySelector('yt-icon'), rTitle = ref.querySelector('.title');
+    copyCss(ref, e.g, ['display', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-left', 'padding-right']);
+    copyCss(rIcon, e.icon, ['width', 'height', 'color', 'flex-shrink'].concat(collapsed ? [] : ['margin-top', 'margin-right', 'margin-bottom', 'margin-left']));
+    if (collapsed) {
+      copyCss(rItem, e.item, ['box-sizing', 'width', 'height', 'min-height', 'border-radius', 'padding-top', 'padding-bottom',
+        'margin-top', 'margin-right', 'margin-bottom', 'margin-left']);
+      copyCss(rTitle, e.ttl, ['font-family', 'font-size', 'font-weight', 'line-height', 'letter-spacing', 'color']);
+      if (rIcon && rTitle) {
+        const gap = rTitle.getBoundingClientRect().top - rIcon.getBoundingClientRect().bottom;
+        e.item.style.rowGap = Math.max(0, Math.round(gap)) + 'px';
       }
+    } else {
+      copyCss(rItem, e.item, BOX);
+      copyCss(ref.querySelector('.title-column'), e.col, BOX.filter(pr => !/^(width|height|min-height)$/.test(pr)));
+      copyCss(rTitle, e.ttl, TEXT);
     }
   };
 

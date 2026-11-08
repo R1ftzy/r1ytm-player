@@ -91,7 +91,7 @@
     closeMenu();
     closeSettings();
     bar.remove();
-    for (const e of guideEntries.values()) e.g.remove();
+    for (const list of guideEntries.values()) list.forEach(e => e.g.remove());
     for (const n of [...roomed.keys()]) unroom(n);
     styleEl.remove();
     setStyle.remove();
@@ -106,6 +106,7 @@
       n.style.removeProperty('--ytmusic-player-bar-height'));
     document.querySelectorAll('ytmusic-player').forEach(n => { n.style.removeProperty('--am-dx'); n.style.removeProperty('--am-dy'); });
     if (gmEl) gmEl.remove();
+    zenOff();
     bgLayer.remove();
     restoreCleared();
     if (bgUrl) URL.revokeObjectURL(bgUrl);
