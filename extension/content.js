@@ -694,7 +694,8 @@
   addEventListener('contextmenu', e => {
     if (replaying || e.shiftKey) return;                       // Shift + right-click keeps the browser's own menu
     const row = e.target.closest && !e.target.closest('.am-bar, .am-menu') && e.target.closest(ROWS);
-    if (!row || !row.querySelector('ytmusic-menu-renderer')) return;
+    // queue rows stamp their menu renderer only when playing / hovered, but YTM still opens a menu on right-click
+    if (!row || !(row.matches('ytmusic-player-queue-item') || row.querySelector('ytmusic-menu-renderer'))) return;
     e.stopPropagation();
     e.preventDefault();
     openGenMenu({ type: 'contextmenu', el: e.target, x: e.clientX, y: e.clientY });
@@ -812,6 +813,13 @@
     html.am-fs ytmusic-section-list-renderer::after,
     html.am-fs ytmusic-search-page::after { display: none; }
 
+    /* the playing / paused song row: YTM's flat highlight is replaced by our own rounded overlay on top of the row,
+       a little taller than the row */
+    ytmusic-responsive-list-item-renderer[play-button-state]:not([play-button-state="default"]) {
+      background: transparent !important; position: relative; }
+    ytmusic-responsive-list-item-renderer[play-button-state]:not([play-button-state="default"])::after {
+      content: ""; position: absolute; inset: -5px 0; z-index: 1; pointer-events: none;
+      border-radius: 10px; background: rgb(255 255 255 / .08); }
     /* closing: page fades back in quickly */
     ytmusic-app-layout > [slot="content"],
     ytmusic-app-layout > #content {
@@ -2552,6 +2560,49 @@
     hideBase();
   });
 
+  /* the playing row's overlay sticks out 5px above / below; shelves clip it (they scroll sideways, which clips both
+     ways). Walk up from the row to the shelf and mark every parent that clips (overflow or paint containment). */
+  const PLAYING_ROW = 'ytmusic-responsive-list-item-renderer[play-button-state]:not([play-button-state="default"])';
+  const ROOM_STOP = 'ytmusic-section-list-renderer, ytmusic-browse-response, ytmusic-tab-renderer, ytmusic-app-layout, body';
+  // each marked parent keeps its own padding / margin: 6px is added to what it has (not replaced), and its original
+  // inline values come back when the song stops
+  const ROOM = 6, ROOM_PROPS = ['padding-top', 'padding-bottom', 'margin-top', 'margin-bottom'];
+  const roomed = new Map();                               // element -> its inline values before we touched it
+  const unroom = n => {
+    const saved = roomed.get(n);
+    for (const pr of ROOM_PROPS) {
+      if (saved[pr].v) n.style.setProperty(pr, saved[pr].v, saved[pr].p);
+      else n.style.removeProperty(pr);
+    }
+    roomed.delete(n);
+  };
+  const room = n => {
+    const saved = {};
+    for (const pr of ROOM_PROPS) saved[pr] = { v: n.style.getPropertyValue(pr), p: n.style.getPropertyPriority(pr) };
+    const cs = getComputedStyle(n);
+    for (const pr of ROOM_PROPS) {
+      const add = pr.startsWith('padding') ? ROOM : -ROOM;
+      n.style.setProperty(pr, (parseFloat(cs.getPropertyValue(pr)) || 0) + add + 'px', 'important');
+    }
+    roomed.set(n, saved);
+  };
+  const roomForPlaying = () => {
+    const want = new Set();
+    for (const row of document.querySelectorAll(PLAYING_ROW)) {
+      const shelf = row.closest('ytmusic-carousel');           // only shelves clip; playlists, albums, the player page don't
+      if (!shelf) continue;
+      for (let n = row.parentElement; n && n !== shelf.parentElement && !n.matches(ROOM_STOP); n = n.parentElement) {
+        const cs = getComputedStyle(n);
+        if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible' || /paint|strict|content/.test(cs.contain)) want.add(n);
+      }
+    }
+    for (const n of [...roomed.keys()]) if (!want.has(n) || !n.isConnected) unroom(n);
+    for (const n of want) if (!roomed.has(n)) room(n);
+  };
+  window.amRoomProbe = () => console.table([...roomed.keys()].map(n => ({ el: n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') +
+    (typeof n.className === 'string' ? '.' + n.className.trim().split(/\s+/).slice(0, 3).join('.') : ''),
+    overflow: getComputedStyle(n).overflow, contain: getComputedStyle(n).contain })));
+
   /* ---------- sync loop ---------- */
   let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
   const timer = setInterval(() => {
@@ -2567,6 +2618,7 @@
       clearShade();
     }
     if (tick % 4 === 1 && curPage === 'artist') syncArtist();
+    if (tick % 4 === 3) roomForPlaying();                 // room for the playing row's overlay
     updateRefractMap();                                   // no-op unless refraction is on and the bar changed size
     watchPage();
     onPageState();
@@ -2645,6 +2697,7 @@
     closeSettings();
     bar.remove();
     for (const e of guideEntries.values()) e.g.remove();
+    for (const n of [...roomed.keys()]) unroom(n);
     styleEl.remove();
     setStyle.remove();
     for (const s of SETTINGS) if (s.css) document.documentElement.style.removeProperty(s.css(0)[0]);
