@@ -1,6 +1,7 @@
   /* ---------- sync loop ---------- */
   let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
   const timer = setInterval(() => {
+    if (zenEl) return;                                    // zen covers everything: nothing here is visible, save the work
     if (performance.now() > animatingUntil) hideBase();   // skip layout-heavy work mid-animation
     if (tick++ % 4 === 0) syncGuideEntry();               // sidebar entry: once a second is plenty
     if (tick % 4 === 2 && performance.now() > animatingUntil) sweepBg();   // custom background: clear new page backgrounds

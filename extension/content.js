@@ -2615,6 +2615,8 @@
   // pause, next (to skip a bad pick by YTM), a sleep timer and a close button that stays locked until the time is up. Everything behind it is inert,
   // YTM's hotkeys and the media keys for next / previous / seek are blocked. The end time is saved, so a reload goes
   // straight back into zen until it's over. "No limit" runs until closed, with close available from the start.
+  // Power: while zen is up the page behind it isn't rendered at all (content-visibility), r1ytm's main loop pauses, the
+  // zen clock ticks once a second, and a playing music video drops to its lowest picture quality (audio is untouched).
   const P_ZEN = 'M12 2c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm9 14v-2c-2.24 0-4.16-.96-5.6-2.68l-1.34-1.6A1.98 1.98 0 0 0 12.53 9h-1.05c-.59 0-1.15.26-1.53.71l-1.34 1.6C7.16 13.04 5.24 14 3 14v2c2.77 0 5.19-1.17 7-3.25V15l-3.88 1.55c-.67.27-1.12.93-1.12 1.66C5 19.2 5.8 20 6.79 20H9v-.5a2.5 2.5 0 0 1 2.5-2.5h3c.28 0 .5.22.5.5s-.22.5-.5.5h-3c-.83 0-1.5.67-1.5 1.5v.5h7.21c.99 0 1.79-.8 1.79-1.79 0-.73-.45-1.39-1.12-1.66L14 15v-2.25c1.81 2.08 4.23 3.25 7 3.25z';
   const ZEN_KEY = 'am-zen';                      // { until, start } (epoch ms) while a zen session runs; until 0 = no limit
   const ZEN_MIN_KEY = 'am-zen-mins';             // last picked length in minutes; 0 = no limit
@@ -2832,9 +2834,10 @@
     }
   };
   const uninertPage = () => { for (const n of inerted) n.inert = false; inerted.clear(); };
-  // show the card after the fade to black (hard cut in)
+  // show the card after the fade to black (hard cut in); from then on the page behind isn't rendered
   const cutIn = (z, delay) => setTimeout(() => {
     if (zenEl !== z) return;
+    html.classList.add('am-zen-on');
     z.classList.remove('am-zen-black');
     fitZen();
   }, delay);
@@ -2921,12 +2924,12 @@
       sleepAt = typeof st === 'number' && st ? Date.now() + st * 60000 : 0;
       sleepTitle = (navigator.mediaSession.metadata || {}).title || '';
       zenUpdate();
+      zenSchedule();
     });
     zenUi.close = zbtn(ctl, 'CLOSE', () => { if (!zenLocked()) closeZen(); }, 'am-zclose');
 
-    clearInterval(zenTick);
-    zenTick = setInterval(zenUpdate, 250);
     zenUpdate();
+    zenSchedule();
     await loadZenFonts();
     if (!zenName) findZenName().then(() => { if (zenEl === z && setHead(zenUi.head)) fitZen(); });
     cutIn(z, old ? 350 : ZEN_FADE_MS);
@@ -2936,12 +2939,14 @@
     if (!zenEl) return;
     const z = zenEl, wasOn = zenMode === 'on';
     zenEl = null; zenMode = null; zenUi = {};
-    clearInterval(zenTick);
+    clearTimeout(zenTick);
     sleepIdx = 0; sleepAt = 0;
+    html.classList.remove('am-zen-on');
     uninertPage();
     if (wasOn) {
       store.set(ZEN_KEY, 'null');
       restoreMediaKeys();
+      restoreQuality();
     }
     z.classList.add('am-zen-out');
     setTimeout(() => z.remove(), 400);
@@ -3047,38 +3052,83 @@
       '| byline links:', ytLinks().map(l => l.getAttribute('href')), '| cached:', albumCache.get(id));
   };
 
+  /* power: a playing music video is still decoded (and downloaded) behind the black screen, so its picture drops to
+     the lowest quality while zen is up and the previous setting comes back on close. Audio is a separate stream and
+     doesn't change. These are YouTube player calls that may not exist in every version, so all of it is best effort. */
+  let zenQuality = null, zenQualityVid = '';
+  const moviePlayer = () => document.querySelector('#movie_player');
+  const lowerQuality = () => {
+    const id = curVideoId();
+    if (!id || id === zenQualityVid) return;                // once per video (YTM may reset it on a new one)
+    zenQualityVid = id;
+    try {
+      const p = moviePlayer();
+      if (!p) return;
+      if (zenQuality === null) zenQuality = (p.getPreferredQuality && p.getPreferredQuality()) || 'auto';
+      if (p.setPlaybackQualityRange) p.setPlaybackQualityRange('tiny', 'tiny');
+      else if (p.setPlaybackQuality) p.setPlaybackQuality('tiny');
+    } catch {}
+  };
+  const restoreQuality = () => {
+    const q = zenQuality || 'auto';
+    zenQuality = null; zenQualityVid = '';
+    try {
+      const p = moviePlayer();
+      if (!p) return;
+      if (p.setPlaybackQualityRange) p.setPlaybackQualityRange(q, q);
+      else if (p.setPlaybackQuality) p.setPlaybackQuality(q);
+    } catch {}
+  };
+
+  // the zen loop: once a second, just after each whole second so the clock never skips or doubles; every 250ms near
+  // the end of a song while "sleep at the end of this song" is set (it pauses in the last 0.6s)
+  const zenSchedule = () => {
+    clearTimeout(zenTick);
+    if (zenMode !== 'on') return;
+    const v = video();
+    const nearEnd = SLEEP_STEPS[sleepIdx] === 'end' && v && v.duration && v.duration - v.currentTime < 2;
+    zenTick = setTimeout(() => { zenUpdate(); zenSchedule(); }, nearEnd ? 250 : 1000 - Date.now() % 1000 + 5);
+  };
+
   const zenUpdate = () => {
     if (zenMode !== 'on' || !zenUi.big) return;
     const now = Date.now(), noLimit = !zenUntil, left = zenUntil - now, locked = !noLimit && left > 0;
+    const shownNow = !document.hidden;              // a hidden tab only needs the sleep timer and the key blocking
     blockMediaKeys();
-    inertPage();
+    lowerQuality();
+    if (shownNow) inertPage();
 
     // song
     const m = navigator.mediaSession.metadata;
-    const t = (m && m.title) || '', a = (m && m.artist) || '', al = zenAlbum(m);
-    const headChanged = setHead(zenUi.head);
-    if (t + '\n' + a + '\n' + al !== zenShown || headChanged) {
-      zenShown = t + '\n' + a + '\n' + al;
-      // the album under the title (left out when there's none, or it's just the title again)
-      zenUi.album.textContent = al && al.trim().toLowerCase() !== t.trim().toLowerCase() ? al : '';
-      const clean = t.replace(/\s*[([][^)\]]*[)\]]/g, '').trim() || t;    // "(feat. …)", "[Official Video]" off the big line
-      zenUi.big.dataset.text = (clean || 'SILENCE').toUpperCase();
-      zenUi.sub.textContent = !t ? 'Nothing is playing.' : a || 'Unknown artist';
-      fitZen();
-    }
-
-    // lock
-    zenUi.clock.textContent = noLimit ? `ZEN:${fmtTime(now - zenStart)}` : locked ? `LOCKED:${fmtTime(left)}` : 'UNLOCKED:';
-    zenUi.close.disabled = locked;
-    zenUi.close.textContent = locked ? 'CLOSE · LOCKED' : 'CLOSE';
-    zenUi.close.title = locked ? `Unlocks in ${fmtTime(left)}` : 'Leave zen mode';
-    zenUi.close.classList.toggle('am-on', !locked);
-
-    // play / pause
+    const t = (m && m.title) || '';
     const v = video();
-    zenUi.play.textContent = !v || v.paused ? 'PLAY' : 'PAUSE';
-    zenUi.play.disabled = !t;
-    zenUi.next.disabled = !t;
+    if (shownNow) {
+      const a = (m && m.artist) || '', al = zenAlbum(m);
+      const headChanged = setHead(zenUi.head);
+      if (t + '\n' + a + '\n' + al !== zenShown || headChanged) {
+        zenShown = t + '\n' + a + '\n' + al;
+        // the album under the title (left out when there's none, or it's just the title again)
+        zenUi.album.textContent = al && al.trim().toLowerCase() !== t.trim().toLowerCase() ? al : '';
+        const clean = t.replace(/\s*[([][^)\]]*[)\]]/g, '').trim() || t;    // "(feat. …)", "[Official Video]" off the big line
+        zenUi.big.dataset.text = (clean || 'SILENCE').toUpperCase();
+        // a full stop after the artist, like a title card line (not when it already ends in punctuation)
+        const who = a || 'Unknown artist';
+        zenUi.sub.textContent = !t ? 'Nothing is playing.' : /[.!?…]$/.test(who) ? who : who + '.';
+        fitZen();
+      }
+
+      // lock
+      zenUi.clock.textContent = noLimit ? `ZEN:${fmtTime(now - zenStart)}` : locked ? `LOCKED:${fmtTime(left)}` : 'UNLOCKED:';
+      zenUi.close.disabled = locked;
+      zenUi.close.textContent = locked ? 'CLOSE · LOCKED' : 'CLOSE';
+      zenUi.close.title = locked ? `Unlocks in ${fmtTime(left)}` : 'Leave zen mode';
+      zenUi.close.classList.toggle('am-on', !locked);
+
+      // play / pause
+      zenUi.play.textContent = !v || v.paused ? 'PLAY' : 'PAUSE';
+      zenUi.play.disabled = !t;
+      zenUi.next.disabled = !t;
+    }
 
     // sleep timer
     const st = SLEEP_STEPS[sleepIdx];
@@ -3090,6 +3140,7 @@
       if (v && !v.paused) v.pause();
       sleepIdx = 0; sleepAt = 0;
     }
+    if (!shownNow) return;
     const st2 = SLEEP_STEPS[sleepIdx];
     zenUi.sleep.textContent = !st2 ? 'SLEEP: OFF' : st2 === 'end' ? 'SLEEP: END OF SONG' : `SLEEP:${fmtTime(sleepAt - now)}`;
     zenUi.sleep.classList.toggle('am-on', !!st2);
@@ -3119,6 +3170,8 @@
   addEventListener('focusin', zenFocus, true);
   const zenResize = () => fitZen();
   addEventListener('resize', zenResize);
+  const zenVisible = () => { if (!document.hidden && zenMode === 'on') zenUpdate(); };
+  document.addEventListener('visibilitychange', zenVisible);
 
   const zenStyle = el('style', null, document.head);
   zenStyle.textContent = `
@@ -3129,6 +3182,9 @@
     .am-zen.am-zen-out { opacity: 0; transition: opacity .35s ease; pointer-events: none; }
     @keyframes am-zen-in { from { opacity: 0; } }
     .am-zen.am-zen-black .am-zc, .am-zen.am-zen-black .am-zctl { visibility: hidden; }
+    /* power: nothing behind zen is styled, laid out or painted (GIF backgrounds, blur, the video's picture...);
+       the elements stay in the page, so playback and YTM's state carry on */
+    html.am-zen-on body > :not(.am-zen) { content-visibility: hidden !important; }
 
     .am-zc { position: absolute; left: var(--zx); right: var(--zx); top: 46%; translate: 0 -50%; }
     .am-zl { white-space: nowrap; }
@@ -3190,10 +3246,13 @@
 
   // undo everything (for amOff)
   const zenOff = () => {
-    clearInterval(zenTick);
+    clearTimeout(zenTick);
     if (zenEl) zenEl.remove();
+    if (zenMode === 'on') restoreQuality();
     zenEl = null; zenMode = null;
+    html.classList.remove('am-zen-on');
     uninertPage();
+    document.removeEventListener('visibilitychange', zenVisible);
     for (const type of ['keydown', 'keyup', 'keypress']) removeEventListener(type, zenKeys, true);
     removeEventListener('focusin', zenFocus, true);
     removeEventListener('resize', zenResize);
@@ -3209,6 +3268,7 @@
   /* ---------- sync loop ---------- */
   let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
   const timer = setInterval(() => {
+    if (zenEl) return;                                    // zen covers everything: nothing here is visible, save the work
     if (performance.now() > animatingUntil) hideBase();   // skip layout-heavy work mid-animation
     if (tick++ % 4 === 0) syncGuideEntry();               // sidebar entry: once a second is plenty
     if (tick % 4 === 2 && performance.now() > animatingUntil) sweepBg();   // custom background: clear new page backgrounds

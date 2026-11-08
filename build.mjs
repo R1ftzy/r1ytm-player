@@ -2,8 +2,7 @@
 // Builds every copy of the script from src/.
 //
 //   src/*.js (edit these)  ->  extension/content.js
-//                          ->  r1ytm.user.js
-//                          ->  README.md "Userscript source" block
+//                          ->  r1ytm.user.js   (committed; the README links to it for userscript installs)
 //
 // The src files are NOT separate modules: they are joined, in the order of
 // SECTIONS below, inside one (() => { ... })() wrapper and share its scope.
@@ -76,23 +75,15 @@ const header = `// ==UserScript==
 // @match        https://music.youtube.com/*
 // @grant        none
 // @run-at       document-idle
+// @downloadURL  https://raw.githubusercontent.com/R1ftzy/r1ytm-player/main/r1ytm.user.js
+// @updateURL    https://raw.githubusercontent.com/R1ftzy/r1ytm-player/main/r1ytm.user.js
 // ==/UserScript==
 `;
 const userscript = header + content;
 
-// README: replace the ```js fence inside the "Userscript source" <details>.
-const readme = readFileSync(p('README.md'), 'utf8');
-const re = /(<summary>Userscript source<\/summary>\s*```js\n)[\s\S]*?(\n```)/;
-if (!re.test(readme)) {
-  console.error('README.md: could not find the "Userscript source" ```js block');
-  process.exit(1);
-}
-const newReadme = readme.replace(re, (_, a, b) => a + userscript.slice(0, -1) + b);
-
 const outputs = [
   ['extension/content.js', content],
   ['r1ytm.user.js', userscript],
-  ['README.md', newReadme],
 ];
 
 let stale = 0;
