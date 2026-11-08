@@ -2805,6 +2805,16 @@ Install [Tampermonkey](https://www.tampermonkey.net/) (or Violentmonkey), create
 
 </details>
 
+## Editing the code
+
+The source is in `src/`, one file per part of the script. Do not edit `extension/content.js` or the userscript above: they are generated.
+
+1. Edit the files in `src/`.
+2. Run `node build.mjs` (needs Node.js, no packages). It joins the `src/` files into `extension/content.js`, `r1ytm.user.js` and the userscript block in this README.
+3. Run `node build.mjs --check` to make sure nothing is out of date before a commit.
+
+The `src/` files are joined in the order listed in `build.mjs` and share one scope, so a new file must be added to its `SECTIONS` list.
+
 ## Sign and install your own build (Firefox)
 
 Release Firefox only installs signed add-ons. To sign your own copy:
