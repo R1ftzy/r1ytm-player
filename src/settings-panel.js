@@ -1,27 +1,64 @@
   /* ---------- settings (sidebar entry "r1ytm" -> panel) ---------- */
   // Values live in localStorage ("am-settings") and are applied as CSS variables on <html>; the bar layout
   // (full / compact) keeps its own key ("am-bar-compact") through applyMode().
+  const ZEN_ENDS = [['None', 0], ['.', 1], [',', 2]];
   const SETTINGS = [
-    { group: 'Transparency', key: 'barAlpha', label: 'Bar opacity', min: 0, max: 90, step: 1, def: 28, unit: '%',
-      css: v => ['--am-bar-a', v / 100] },
-    { group: 'Transparency', key: 'barBlur', label: 'Bar blur', min: 0, max: 60, step: 1, def: 28, unit: 'px',
-      css: v => ['--am-bar-blur', v + 'px'] },
-    { group: 'Transparency', key: 'menuAlpha', label: 'Menu opacity', min: 30, max: 98, step: 1, def: 72, unit: '%',
-      css: v => ['--am-menu-a', v / 100] },
-    { group: 'Transparency', key: 'menuBlur', label: 'Menu blur', min: 0, max: 80, step: 1, def: 40, unit: 'px',
-      css: v => ['--am-menu-blur', v + 'px'] },
-    { group: 'Glass', key: 'refract', type: 'toggle', label: 'Refraction', min: 0, max: 1, def: 0,
+    { group: 'Bar & menus', sub: 'Transparency', key: 'barAlpha', label: 'Bar opacity', min: 0, max: 90, step: 1, def: 28, unit: '%',
+      css: v => ['--am-bar-a', v / 100], scope: '.am-bar' },
+    { group: 'Bar & menus', sub: 'Transparency', key: 'barBlur', label: 'Bar blur', min: 0, max: 60, step: 1, def: 28, unit: 'px',
+      css: v => ['--am-bar-blur', v + 'px'], scope: '.am-bar' },
+    { group: 'Bar & menus', sub: 'Transparency', key: 'menuAlpha', label: 'Menu opacity', min: 30, max: 98, step: 1, def: 72, unit: '%',
+      css: v => ['--am-menu-a', v / 100], scope: '.am-menu' },
+    { group: 'Bar & menus', sub: 'Transparency', key: 'menuBlur', label: 'Menu blur', min: 0, max: 80, step: 1, def: 40, unit: 'px',
+      css: v => ['--am-menu-blur', v + 'px'], scope: '.am-menu' },
+    { group: 'Bar & menus', sub: 'Glass', key: 'refract', type: 'toggle', label: 'Refraction', min: 0, max: 1, def: 0,
       note: () => canRefract ? 'Bends the background at the edges of the bar' : 'Needs Chrome, Edge or Brave',
       disabled: () => !canRefract },
-    { group: 'Glass', key: 'refractStrength', label: 'Refraction strength', min: 10, max: 200, step: 1, def: 90, unit: 'px',
+    { group: 'Bar & menus', sub: 'Glass', key: 'refractStrength', label: 'Refraction strength', min: 10, max: 200, step: 1, def: 90, unit: 'px',
       dep: 'refract' },
-    { group: 'Size', key: 'barSize', label: 'Bar size', min: 80, max: 130, step: 5, def: 100, unit: '%',
-      css: v => ['--am-size', v / 100] },
-    { group: 'Size', key: 'menuSize', label: 'Menu size', min: 85, max: 125, step: 5, def: 100, unit: '%',
-      css: v => ['--am-menu-size', v / 100] },
-    { group: 'Size', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
+    { group: 'Bar & menus', sub: 'Size', key: 'barSize', label: 'Bar size', min: 80, max: 130, step: 5, def: 100, unit: '%',
+      css: v => ['--am-size', v / 100], scope: '.am-bar, ytmusic-section-list-renderer, ytmusic-search-page' },
+    { group: 'Bar & menus', sub: 'Size', key: 'menuSize', label: 'Menu size', min: 85, max: 125, step: 5, def: 100, unit: '%',
+      css: v => ['--am-menu-size', v / 100], scope: '.am-menu' },
+    { group: 'Bar & menus', sub: 'Size', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
       note: () => 'Grows when you point at it, easier to drag' },
+    // zen screen (zen.js reads these when zen opens); shown after Font / Background (see LATE_GROUPS).
+    // A 'choice' is a row of segment buttons; its value is the number next to each label.
+    { group: 'Zen', sub: 'Look', key: 'zenLayout', type: 'choice', label: 'Layout', options: [['Auto', 0], ['Wide', 1], ['4:3', 2]],
+      min: 0, max: 2, def: 0, note: () => 'Auto picks by the window shape' },
+    { group: 'Zen', sub: 'Look', key: 'zenBigFont', type: 'choice', label: 'Title font', options: [['Serif', 0], ['Sans', 1], ['Yours', 2]],
+      min: 0, max: 2, def: 0, note: () => 'Greeting, song title and artist. Yours: the font set under Font' },
+    { group: 'Zen', sub: 'Look', key: 'zenSmallFont', type: 'choice', label: 'Text font', options: [['Sans', 0], ['Serif', 1], ['Yours', 2]],
+      min: 0, max: 2, def: 0, note: () => 'Album, clock, lyrics and buttons' },
+    { group: 'Zen', sub: 'Show', key: 'zenGreeting', type: 'toggle', label: 'Greeting', min: 0, max: 1, def: 1 },
+    { group: 'Zen', sub: 'Show', key: 'zenAlbum', type: 'toggle', label: 'Album', min: 0, max: 1, def: 1 },
+    { group: 'Zen', sub: 'Show', key: 'zenArtist', type: 'toggle', label: 'Artist', min: 0, max: 1, def: 1 },
+    // what each line ends with: 0 nothing, 1 a full stop, 2 a comma (not added when the text already ends in one).
+    // zenDot is the artist's (it was an on / off "full stop" before, so a saved 1 still means a full stop)
+    { group: 'Zen', sub: 'Line endings', key: 'zenHeadEnd', type: 'choice', label: 'Greeting ends with', options: ZEN_ENDS, min: 0, max: 2, def: 0, dep: 'zenGreeting' },
+    { group: 'Zen', sub: 'Line endings', key: 'zenTitleEnd', type: 'choice', label: 'Title ends with', options: ZEN_ENDS, min: 0, max: 2, def: 0 },
+    { group: 'Zen', sub: 'Line endings', key: 'zenAlbumEnd', type: 'choice', label: 'Album ends with', options: ZEN_ENDS, min: 0, max: 2, def: 0, dep: 'zenAlbum' },
+    { group: 'Zen', sub: 'Line endings', key: 'zenDot', type: 'choice', label: 'Artist ends with', options: ZEN_ENDS, min: 0, max: 2, def: 1, dep: 'zenArtist' },
+    { group: 'Zen', sub: 'Show', key: 'zenClock', type: 'toggle', label: 'Clock', min: 0, max: 1, def: 1,
+      note: () => 'The time left, or the time in zen with no limit' },
+    { group: 'Zen', sub: 'Lyrics', key: 'zenLyrics', type: 'choice', label: 'Lyrics', options: [['Off', 0], ['1 line', 1], ['2 lines', 2]],
+      min: 0, max: 2, def: 0,
+      note: () => hasBetterLyrics() ? 'From Better Lyrics. 2 lines: the next line under the current one' : 'Needs the Better Lyrics extension',
+      disabled: () => !hasBetterLyrics() },
+    { group: 'Zen', sub: 'Lyrics', key: 'zenLyricsPos', type: 'choice', label: 'Lyrics position', options: [['Bottom', 0], ['Under title', 1]],
+      min: 0, max: 1, def: 0, dep: 'zenLyrics', note: () => 'Above the buttons, or under the text at the top' },
+    { group: 'Zen', sub: 'Lyrics', key: 'zenLyricsSmooth', type: 'toggle', label: 'Smooth lyrics', min: 0, max: 1, def: 0, dep: 'zenLyrics',
+      note: () => 'Lines slide up and fade, instead of a hard cut' },
+    // how this panel looks: categories on the side (1, Modern) or the original long list (0, Legacy). No group: it is
+    // the switch in the panel's footer, not a row
+    { key: 'setLayout', min: 0, max: 1, def: 1 },
   ];
+  // A row's group is its category (a page in the Modern layout); sub splits a category into cards with a small
+  // heading. Rows are gathered by group and sub wherever they are in the list, so order only matters inside a card.
+  const LATE_GROUPS = ['Zen'];        // these groups go at the end of the panel, after the look groups
+  // Better Lyrics (a separate extension) adds its stylesheet links and an empty overlay div to the page on load,
+  // whether or not lyrics are shown. Its own scripts are in an isolated world, so the page is all we can see.
+  const hasBetterLyrics = () => !!document.querySelector('link[id^="blyrics-style-"], #blyrics-ad-overlay, #blyrics-wrapper');
   /* refraction ("liquid glass"): an SVG displacement filter in the bar's backdrop-filter. The map is drawn for the bar's
      exact size and rounded shape: near the edge every pixel samples the background a little further inside, so it
      bends like the rim of a glass pane. Only Chromium supports url() filters in backdrop-filter; elsewhere the toggle is off. */
@@ -105,8 +142,9 @@
   const applyRefraction = () => {
     const on = !!settings.refract && canRefract;
     document.documentElement.classList.toggle('am-refract', on);
-    for (const [dm, k] of refractDisps) dm.setAttribute('scale', String(Math.round(settings.refractStrength * k)));
-    refractBlur.setAttribute('stdDeviation', String(settings.barBlur));      // the bar blur, now done inside the filter
+    const setAttr = (n, a, v) => { if (n.getAttribute(a) !== v) n.setAttribute(a, v); };   // a changed filter repaints the bar
+    for (const [dm, k] of refractDisps) setAttr(dm, 'scale', String(Math.round(settings.refractStrength * k)));
+    setAttr(refractBlur, 'stdDeviation', String(settings.barBlur));      // the bar blur, now done inside the filter
     if (on) updateRefractMap();
   };
 
@@ -121,12 +159,19 @@
     return out;
   };
   const settings = loadSettings();
+  /* speed: the values go in one small style sheet, each only on the elements that use it (s.scope), not on <html>.
+     A custom property set on <html> is inherited by every element of YTM's very big page, so every change (each step
+     of a slider) made the browser restyle all of it. The sheet is only rewritten when a value really changed. */
+  const setVars = el('style', null, document.head);
   const applySettings = () => {
+    const by = new Map();
     for (const s of SETTINGS) {
       if (!s.css) continue;
       const [name, value] = s.css(settings[s.key]);
-      document.documentElement.style.setProperty(name, String(value));
+      by.set(s.scope, (by.get(s.scope) || '') + `${name}: ${value}; `);
     }
+    const css = [...by].map(([sel, decl]) => `${sel} { ${decl}}`).join('\n');
+    if (setVars.textContent !== css) setVars.textContent = css;
     document.documentElement.classList.toggle('am-easy-track', !!settings.easyTrack);
     applyRefraction();
   };
@@ -138,6 +183,15 @@
   const P_CLOSE = 'M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z';
 
   let setEl = null;
+  let setCat = '';                     // Modern layout: the category shown (kept between openings)
+  // the panel built again in place (after the layout setting changes), without the open animation
+  const rebuildSettings = () => {
+    if (!setEl) return;
+    const old = setEl;
+    setEl = null;
+    old.remove();
+    openSettings(true);
+  };
   const closeSettings = () => {
     if (!setEl) return;
     const s = setEl;
@@ -145,10 +199,10 @@
     s.classList.add('am-set-out');
     setTimeout(() => s.remove(), 180);
   };
-  const openSettings = () => {
+  const openSettings = quiet => {
     if (setEl) return;
     closeMenu();
-    const back = el('div', 'am-set-back', document.body);
+    const back = el('div', 'am-set-back' + (quiet === true ? ' am-set-quiet' : ''), document.body);
     const p = el('div', 'am-set', back);
     p.setAttribute('role', 'dialog');
     p.setAttribute('aria-label', 'r1ytm settings');
@@ -165,16 +219,44 @@
     x.addEventListener('click', closeSettings);
 
     const ranges = [], deps = [];
-    const showDeps = () => deps.forEach(([row, dep]) => row.classList.toggle('am-set-dim', !settings[dep]));
-    let section = null, lastGroup = '';
-    for (const s of SETTINGS) {
-      if (s.group !== lastGroup) {
-        lastGroup = s.group;
-        el('div', 'am-set-group', p).textContent = s.group;
-        section = el('div', 'am-set-card', p);
+    // a row whose dep is off (or not available) is dimmed
+    const depOff = key => { const d = SETTINGS.find(x => x.key === key); return !settings[key] || !!(d && d.disabled && d.disabled()); };
+    const showDeps = () => deps.forEach(([row, dep]) => row.classList.toggle('am-set-dim', depOff(dep)));
+    const addRow = (s, section) => {
+      if (s.type === 'choice') {
+        const off = !!(s.disabled && s.disabled());       // not available here: grayed out, first option shown
+        const row = el('div', 'am-set-row am-set-inline' + (off ? ' am-set-na' : ''), section);
+        if (s.dep) deps.push([row, s.dep]);
+        const lt = el('div', 'am-set-ltext', row);
+        el('div', 'am-set-label', lt).textContent = s.label;
+        if (s.note) el('div', 'am-set-note', lt).textContent = s.note();
+        const seg = el('div', 'am-set-seg', row);
+        seg.setAttribute('role', 'group');
+        seg.setAttribute('aria-label', s.label);
+        const btns = s.options.map(([t, v]) => {
+          const b = el('button', 'am-set-segbtn', seg);
+          b.textContent = t;
+          b.disabled = off;
+          b.addEventListener('click', () => {
+            const was = settings[s.key];
+            settings[s.key] = v; applySettings(); saveSettings(); show();
+            if (s.change && was !== v) s.change();
+          });
+          return [b, v];
+        });
+        const show = () => {
+          const cur = off ? s.options[0][1] : settings[s.key];
+          btns.forEach(([b, v]) => { b.classList.toggle('am-on', cur === v); b.setAttribute('aria-pressed', String(cur === v)); });
+          showDeps();
+        };
+        show();
+        ranges.push(show);
+        return;
       }
       if (s.type === 'toggle') {
-        const row = el('div', 'am-set-row am-set-inline', section);
+        const off = !!(s.disabled && s.disabled());       // not available here: grayed out and shown as off
+        const row = el('div', 'am-set-row am-set-inline' + (off ? ' am-set-na' : ''), section);
+        if (s.dep) deps.push([row, s.dep]);
         const lt = el('div', 'am-set-ltext', row);
         el('div', 'am-set-label', lt).textContent = s.label;
         if (s.note) el('div', 'am-set-note', lt).textContent = s.note();
@@ -182,8 +264,8 @@
         sw.setAttribute('role', 'switch');
         sw.setAttribute('aria-label', s.label);
         const show = () => {
-          sw.classList.toggle('am-on', !!settings[s.key]);
-          sw.setAttribute('aria-checked', String(!!settings[s.key]));
+          sw.classList.toggle('am-on', !off && !!settings[s.key]);
+          sw.setAttribute('aria-checked', String(!off && !!settings[s.key]));
           showDeps();
         };
         sw.addEventListener('click', () => {
@@ -192,10 +274,10 @@
           saveSettings();
           show();
         });
-        if (s.disabled && s.disabled()) { sw.disabled = true; sw.classList.add('am-set-off'); }
+        if (off) { sw.disabled = true; sw.classList.add('am-set-off'); }
         show();
         ranges.push(show);
-        continue;
+        return;
       }
       const row = el('label', 'am-set-row', section);
       if (s.dep) deps.push([row, s.dep]);
@@ -209,18 +291,40 @@
         val.textContent = settings[s.key] + s.unit;
         r.style.setProperty('--p', ((settings[s.key] - s.min) / (s.max - s.min) * 100) + '%');
       };
+      // while dragging: the number follows at once, the look once per frame; saved when let go
+      let raf = 0;
       r.addEventListener('input', () => {
         settings[s.key] = +r.value;
-        applySettings();
         show();
-        saveSettings();
+        if (!raf) raf = requestAnimationFrame(() => { raf = 0; applySettings(); });
       });
+      r.addEventListener('change', saveSettings);
       show();
       ranges.push(show);
-    }
-    showDeps();
+    };
+    let sizeCard = null;
+    const addGroups = list => {
+      const groups = new Map();                 // group -> sub -> rows, in order of first appearance
+      for (const s of list) {
+        if (!s.group) continue;
+        if (!groups.has(s.group)) groups.set(s.group, new Map());
+        const subs = groups.get(s.group), k = s.sub || '';
+        if (!subs.has(k)) subs.set(k, []);
+        subs.get(k).push(s);
+      }
+      for (const [g, subs] of groups) {
+        el('div', 'am-set-group', p).textContent = g;
+        for (const [sub, rows] of subs) {
+          if (sub) el('div', 'am-set-subhead', p).textContent = sub;
+          const card = el('div', 'am-set-card', p);
+          if (sub === 'Size') sizeCard = card;
+          rows.forEach(s => addRow(s, card));
+        }
+      }
+    };
+    addGroups(SETTINGS.filter(s => !LATE_GROUPS.includes(s.group)));
     // bar layout (full / compact), in the size card
-    const lay = el('div', 'am-set-row am-set-inline', section);
+    const lay = el('div', 'am-set-row am-set-inline', sizeCard);
     el('span', 'am-set-label', lay).textContent = 'Bar layout';
     const seg = el('div', 'am-set-seg', lay);
     const segBtns = [['Full', false], ['Compact', true]].map(([t, compact]) => {
@@ -232,11 +336,14 @@
     const showSeg = () => segBtns.forEach(([b, c]) => b.classList.toggle('am-on', bar.classList.contains('am-compact') === c));
     showSeg();
     const lookRefresh = buildLookSettings(p);      // Font + Background groups
+    addGroups(SETTINGS.filter(s => LATE_GROUPS.includes(s.group)));
+    showDeps();
 
     const foot = el('div', 'am-set-foot', p);
     const reset = el('button', 'am-set-btn', foot);
     reset.textContent = 'Reset to defaults';
     reset.addEventListener('click', () => {
+      const wasLayout = settings.setLayout;
       for (const s of SETTINGS) settings[s.key] = s.def;
       applySettings();
       saveSettings();
@@ -251,10 +358,58 @@
       applyFont();
       applyBg();
       lookRefresh();
+      if (settings.setLayout !== wasLayout) rebuildSettings();
     });
+    // the panel's own layout, between Reset and Done
+    const fl = el('div', 'am-set-footlay', foot);
+    el('span', 'am-set-note', fl).textContent = 'Layout';
+    const flSeg = el('div', 'am-set-seg', fl);
+    flSeg.setAttribute('role', 'group');
+    flSeg.setAttribute('aria-label', 'Settings layout');
+    for (const [t, v] of [['Modern', 1], ['Legacy', 0]]) {
+      const b = el('button', 'am-set-segbtn' + (settings.setLayout === v ? ' am-on' : ''), flSeg);
+      b.textContent = t;
+      b.title = v ? 'Categories on the side' : 'One long list';
+      b.addEventListener('click', () => {
+        if (settings.setLayout === v) return;
+        settings.setLayout = v;
+        saveSettings();
+        rebuildSettings();
+      });
+    }
     const done = el('button', 'am-set-btn am-set-primary', foot);
     done.textContent = 'Done';
     done.addEventListener('click', closeSettings);
+
+    // Modern layout: the same groups, each moved into its own page; a sidebar picks the page. A group is its heading
+    // (.am-set-group) and everything after it up to the next heading.
+    if (settings.setLayout) {
+      p.classList.add('am-set-modern');
+      const nav = el('div', 'am-set-nav'), pane = el('div', 'am-set-pane');
+      nav.setAttribute('role', 'tablist');
+      const secs = [];
+      let sec = null;
+      for (const n of [...p.children]) {
+        if (n === head || n === foot) continue;
+        if (n.classList.contains('am-set-group')) { sec = el('div', 'am-set-section', pane); secs.push([n.textContent, sec]); }
+        if (sec) sec.append(n);
+      }
+      head.after(nav, pane);
+      const navBtns = secs.map(([t]) => {
+        const b = el('button', 'am-set-navbtn', nav);
+        b.textContent = t;
+        b.setAttribute('role', 'tab');
+        b.addEventListener('click', () => showCat(t));
+        return [b, t];
+      });
+      const showCat = name => {
+        setCat = name;
+        secs.forEach(([t, s]) => { s.hidden = t !== name; });
+        navBtns.forEach(([b, t]) => { b.classList.toggle('am-on', t === name); b.setAttribute('aria-selected', String(t === name)); });
+        pane.scrollTop = 0;
+      };
+      if (secs.length) showCat(secs.some(([t]) => t === setCat) ? setCat : secs[0][0]);
+    }
 
     // close on a click on the dimmed backdrop or Escape; keys stay inside (no YTM hotkeys while adjusting)
     back.addEventListener('click', e => { if (e.target === back) closeSettings(); });
@@ -365,9 +520,13 @@
       backdrop-filter: blur(40px) saturate(190%); -webkit-backdrop-filter: blur(40px) saturate(190%);
       border: 1px solid rgb(255 255 255 / .12);
       box-shadow: 0 24px 70px rgb(0 0 0 / .5), inset 0 1px 0 rgb(255 255 255 / .07);
-      animation: am-menu-in .24s cubic-bezier(.2, .9, .25, 1.05); }
-    .am-set-out .am-set { scale: .97; transition: scale .16s ease; }
+      animation: am-set-in .16s cubic-bezier(.2, .8, .2, 1); }
+    .am-set-out .am-set { translate: 0 6px; transition: translate .14s ease; }
     @keyframes am-set-fade { from { opacity: 0; } }
+    /* opening: a short fade and lift. Scaling a blurred panel re-blurs it on every frame, so it doesn't scale */
+    @keyframes am-set-in { from { opacity: 0; translate: 0 8px; } }
+    /* Legacy (one long list): cards out of view are not drawn until they are scrolled to */
+    .am-set:not(.am-set-modern):not(.am-gm-panel) .am-set-card { content-visibility: auto; contain-intrinsic-size: auto 220px; }
 
     .am-set-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
     .am-set-logo svg { width: 34px; height: 34px; display: block; }
@@ -414,6 +573,16 @@
     .am-set-switch.am-on::after { translate: 16px 0; }
     .am-set-switch:focus-visible { box-shadow: 0 0 0 3px rgb(255 255 255 / .2); }
     .am-set-switch.am-set-off { opacity: .4; cursor: default; }
+    .am-set-na .am-set-label, .am-set-na .am-set-seg { opacity: .45; }
+    /* a small heading over each card of a category (Transparency, Glass... inside Bar & menus) */
+    .am-set-subhead { font-size: 12.5px; font-weight: 600; color: rgb(255 255 255 / .55); margin: 14px 8px 6px; }
+    .am-set-group + .am-set-subhead { margin-top: 4px; }
+    .am-set-footlay { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+    .am-set-footlay > .am-set-note { margin: 0; }
+    .am-set-seg { flex-shrink: 0; }
+    .am-set-segbtn:disabled { cursor: default; }
+    .am-set-segbtn { min-width: 1.1em; text-align: center; }
+    .am-set-segbtn:disabled:hover { color: rgb(255 255 255 / .7); }
     .am-set-seg { display: flex; padding: 3px; border-radius: 10px; background: rgb(0 0 0 / .25); }
     .am-set-segbtn { all: unset; cursor: pointer; padding: 5px 12px; border-radius: 8px; font-size: 12.5px;
       color: rgb(255 255 255 / .7); transition: background .15s, color .15s; }
@@ -427,6 +596,31 @@
     .am-set-btn:hover, .am-set-btn:focus-visible { background: rgb(255 255 255 / .1); color: #fff; }
     .am-set-primary { background: #fff; color: #111; font-weight: 600; padding: 8px 20px; }
     .am-set-primary:hover, .am-set-primary:focus-visible { background: rgb(255 255 255 / .85); color: #111; }
+
+    /* Modern layout: a wide dashboard, categories on the left, the picked category on the right */
+    .am-set-quiet, .am-set-quiet .am-set { animation: none; }
+    .am-set.am-set-modern { width: min(860px, 100%); height: min(620px, calc(100vh - 32px)); padding: 0; overflow: hidden;
+      display: grid; grid-template-columns: 210px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+    .am-set-modern > .am-set-head { grid-column: 1 / -1; margin: 0; padding: 16px 18px 14px;
+      border-bottom: 1px solid rgb(255 255 255 / .08); }
+    .am-set-nav { display: flex; flex-direction: column; gap: 2px; padding: 10px; overflow-y: auto; scrollbar-width: none;
+      border-right: 1px solid rgb(255 255 255 / .08); }
+    .am-set-navbtn { all: unset; box-sizing: border-box; cursor: pointer; padding: 9px 12px; border-radius: 10px; font-size: 13.5px;
+      color: rgb(255 255 255 / .65); white-space: nowrap; transition: background .15s, color .15s; }
+    .am-set-navbtn:hover { color: #fff; background: rgb(255 255 255 / .06); }
+    .am-set-navbtn.am-on { color: #fff; background: rgb(255 255 255 / .13); font-weight: 600; }
+    .am-set-navbtn:focus-visible { box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / .4); }
+    .am-set-pane { overflow-y: auto; padding: 4px 22px 22px; scrollbar-width: thin; }
+    .am-set-section[hidden] { display: none; }
+    .am-set-modern .am-set-section > .am-set-group { font-size: 20px; font-weight: 700; letter-spacing: 0; text-transform: none;
+      color: #fff; margin: 16px 2px 12px; }
+    .am-set-modern > .am-set-foot { grid-column: 1 / -1; margin: 0; padding: 12px 18px;
+      border-top: 1px solid rgb(255 255 255 / .08); }
+    /* narrow windows: the categories become a row of tabs above the page */
+    @media (max-width: 640px) {
+      .am-set.am-set-modern { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
+      .am-set-nav { flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid rgb(255 255 255 / .08); }
+    }
 
     @media (prefers-reduced-motion: reduce) { .am-set-back, .am-set { animation: none; } }
   `;

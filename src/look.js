@@ -41,7 +41,7 @@
     'Work Sans', 'Lato', 'Open Sans', 'Raleway', 'Josefin Sans', 'Syne', 'Unbounded', 'Oswald', 'Bebas Neue',
     'Playfair Display', 'Fraunces', 'Lora', 'Merriweather', 'JetBrains Mono', 'Space Mono', 'Comfortaa', 'Pacifico', 'Caveat'];
   const googleStyle = el('style');
-  let fileFace = null, fontRun = 0;
+  let fileFace = null, fontRun = 0, fontMsg = '';
   const cleanName = s => s.trim().replace(/["\\;{}]/g, '');
   // installed? Text measured in the font vs. the plain fallback: no difference for every fallback = not installed
   const fontCtx = document.createElement('canvas').getContext('2d');
@@ -90,6 +90,7 @@
     if (look.font !== 'google') googleStyle.remove();
     html.style.setProperty('--am-font', fam ? `${fam}, ${BASE_FONT}` : BASE_FONT);
     html.classList.toggle('am-font-all', !!fam && look.fontScope === 'all');
+    fontMsg = msg;
     return msg;
   };
 
@@ -120,8 +121,9 @@
   const blurFor = k => { const v = (look.blurPages || {})[k]; return Number.isFinite(v) ? v : look.bgBlur; };
   const applyBanner = () => html.classList.toggle('am-hide-banner', !!look.hideBanner);
   const applyBgVars = () => {
-    html.style.setProperty('--am-bg-dim', String(look.bg === 'color' ? 0 : dimFor(curPage) / 100));
-    html.style.setProperty('--am-bg-blur', (look.bg === 'color' ? 0 : blurFor(curPage)) + 'px');
+    // on the background layer itself, not <html> (see setVars in the settings): a Dim / Blur drag restyles only it
+    bgLayer.style.setProperty('--am-bg-dim', String(look.bg === 'color' ? 0 : dimFor(curPage) / 100));
+    bgLayer.style.setProperty('--am-bg-blur', (look.bg === 'color' ? 0 : blurFor(curPage)) + 'px');
   };
   const restoreCleared = () => {
     for (const n of cleared) { n.style.removeProperty('background-color'); n.style.removeProperty('box-shadow'); }
@@ -354,7 +356,9 @@
         renderFont();
       }, 'am-set-wide');
     const fBody = el('div', 'am-set-sub', fCard);
-    const renderFont = () => {
+    // apply = false when the panel is only being drawn: the font is already applied (applying it again restyles the
+    // whole page and, for a Google font, downloads it again), so only the last status line is shown
+    const renderFont = (apply = true) => {
       fBody.replaceChildren();
       fNote = null;
       if (look.font !== 'default') {
@@ -394,9 +398,10 @@
         ui.seg(sc, [['All of YT Music', 'all'], ['r1ytm only', 'bar']], () => look.fontScope,
           v => { look.fontScope = v; saveLook(); runFont(); });
       }
-      runFont();
+      if (apply) runFont();
+      else if (fNote) fNote.textContent = fontMsg;
     };
-    renderFont();
+    renderFont(false);
 
     /* background */
     el('div', 'am-set-group', p).textContent = 'Background';
@@ -494,6 +499,6 @@
       ui.toggle(bBody, 'Remove header shadow', () => look.noArtistShade, v => { look.noArtistShade = v; saveLook(); applyArtist(); });
     };
     renderBg();
-    return () => { fSeg(); renderFont(); bSeg(); renderBg(); };
+    return () => { fSeg(); renderFont(false); bSeg(); renderBg(); };
   };
 

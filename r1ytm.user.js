@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         r1ytm
 // @namespace    r1ytm
-// @version      1.6.1
+// @version      1.7.0
 // @description  A floating, Apple Music-style control bar for YouTube Music.
 // @match        https://music.youtube.com/*
 // @grant        none
@@ -1182,27 +1182,64 @@
   /* ---------- settings (sidebar entry "r1ytm" -> panel) ---------- */
   // Values live in localStorage ("am-settings") and are applied as CSS variables on <html>; the bar layout
   // (full / compact) keeps its own key ("am-bar-compact") through applyMode().
+  const ZEN_ENDS = [['None', 0], ['.', 1], [',', 2]];
   const SETTINGS = [
-    { group: 'Transparency', key: 'barAlpha', label: 'Bar opacity', min: 0, max: 90, step: 1, def: 28, unit: '%',
-      css: v => ['--am-bar-a', v / 100] },
-    { group: 'Transparency', key: 'barBlur', label: 'Bar blur', min: 0, max: 60, step: 1, def: 28, unit: 'px',
-      css: v => ['--am-bar-blur', v + 'px'] },
-    { group: 'Transparency', key: 'menuAlpha', label: 'Menu opacity', min: 30, max: 98, step: 1, def: 72, unit: '%',
-      css: v => ['--am-menu-a', v / 100] },
-    { group: 'Transparency', key: 'menuBlur', label: 'Menu blur', min: 0, max: 80, step: 1, def: 40, unit: 'px',
-      css: v => ['--am-menu-blur', v + 'px'] },
-    { group: 'Glass', key: 'refract', type: 'toggle', label: 'Refraction', min: 0, max: 1, def: 0,
+    { group: 'Bar & menus', sub: 'Transparency', key: 'barAlpha', label: 'Bar opacity', min: 0, max: 90, step: 1, def: 28, unit: '%',
+      css: v => ['--am-bar-a', v / 100], scope: '.am-bar' },
+    { group: 'Bar & menus', sub: 'Transparency', key: 'barBlur', label: 'Bar blur', min: 0, max: 60, step: 1, def: 28, unit: 'px',
+      css: v => ['--am-bar-blur', v + 'px'], scope: '.am-bar' },
+    { group: 'Bar & menus', sub: 'Transparency', key: 'menuAlpha', label: 'Menu opacity', min: 30, max: 98, step: 1, def: 72, unit: '%',
+      css: v => ['--am-menu-a', v / 100], scope: '.am-menu' },
+    { group: 'Bar & menus', sub: 'Transparency', key: 'menuBlur', label: 'Menu blur', min: 0, max: 80, step: 1, def: 40, unit: 'px',
+      css: v => ['--am-menu-blur', v + 'px'], scope: '.am-menu' },
+    { group: 'Bar & menus', sub: 'Glass', key: 'refract', type: 'toggle', label: 'Refraction', min: 0, max: 1, def: 0,
       note: () => canRefract ? 'Bends the background at the edges of the bar' : 'Needs Chrome, Edge or Brave',
       disabled: () => !canRefract },
-    { group: 'Glass', key: 'refractStrength', label: 'Refraction strength', min: 10, max: 200, step: 1, def: 90, unit: 'px',
+    { group: 'Bar & menus', sub: 'Glass', key: 'refractStrength', label: 'Refraction strength', min: 10, max: 200, step: 1, def: 90, unit: 'px',
       dep: 'refract' },
-    { group: 'Size', key: 'barSize', label: 'Bar size', min: 80, max: 130, step: 5, def: 100, unit: '%',
-      css: v => ['--am-size', v / 100] },
-    { group: 'Size', key: 'menuSize', label: 'Menu size', min: 85, max: 125, step: 5, def: 100, unit: '%',
-      css: v => ['--am-menu-size', v / 100] },
-    { group: 'Size', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
+    { group: 'Bar & menus', sub: 'Size', key: 'barSize', label: 'Bar size', min: 80, max: 130, step: 5, def: 100, unit: '%',
+      css: v => ['--am-size', v / 100], scope: '.am-bar, ytmusic-section-list-renderer, ytmusic-search-page' },
+    { group: 'Bar & menus', sub: 'Size', key: 'menuSize', label: 'Menu size', min: 85, max: 125, step: 5, def: 100, unit: '%',
+      css: v => ['--am-menu-size', v / 100], scope: '.am-menu' },
+    { group: 'Bar & menus', sub: 'Size', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
       note: () => 'Grows when you point at it, easier to drag' },
+    // zen screen (zen.js reads these when zen opens); shown after Font / Background (see LATE_GROUPS).
+    // A 'choice' is a row of segment buttons; its value is the number next to each label.
+    { group: 'Zen', sub: 'Look', key: 'zenLayout', type: 'choice', label: 'Layout', options: [['Auto', 0], ['Wide', 1], ['4:3', 2]],
+      min: 0, max: 2, def: 0, note: () => 'Auto picks by the window shape' },
+    { group: 'Zen', sub: 'Look', key: 'zenBigFont', type: 'choice', label: 'Title font', options: [['Serif', 0], ['Sans', 1], ['Yours', 2]],
+      min: 0, max: 2, def: 0, note: () => 'Greeting, song title and artist. Yours: the font set under Font' },
+    { group: 'Zen', sub: 'Look', key: 'zenSmallFont', type: 'choice', label: 'Text font', options: [['Sans', 0], ['Serif', 1], ['Yours', 2]],
+      min: 0, max: 2, def: 0, note: () => 'Album, clock, lyrics and buttons' },
+    { group: 'Zen', sub: 'Show', key: 'zenGreeting', type: 'toggle', label: 'Greeting', min: 0, max: 1, def: 1 },
+    { group: 'Zen', sub: 'Show', key: 'zenAlbum', type: 'toggle', label: 'Album', min: 0, max: 1, def: 1 },
+    { group: 'Zen', sub: 'Show', key: 'zenArtist', type: 'toggle', label: 'Artist', min: 0, max: 1, def: 1 },
+    // what each line ends with: 0 nothing, 1 a full stop, 2 a comma (not added when the text already ends in one).
+    // zenDot is the artist's (it was an on / off "full stop" before, so a saved 1 still means a full stop)
+    { group: 'Zen', sub: 'Line endings', key: 'zenHeadEnd', type: 'choice', label: 'Greeting ends with', options: ZEN_ENDS, min: 0, max: 2, def: 0, dep: 'zenGreeting' },
+    { group: 'Zen', sub: 'Line endings', key: 'zenTitleEnd', type: 'choice', label: 'Title ends with', options: ZEN_ENDS, min: 0, max: 2, def: 0 },
+    { group: 'Zen', sub: 'Line endings', key: 'zenAlbumEnd', type: 'choice', label: 'Album ends with', options: ZEN_ENDS, min: 0, max: 2, def: 0, dep: 'zenAlbum' },
+    { group: 'Zen', sub: 'Line endings', key: 'zenDot', type: 'choice', label: 'Artist ends with', options: ZEN_ENDS, min: 0, max: 2, def: 1, dep: 'zenArtist' },
+    { group: 'Zen', sub: 'Show', key: 'zenClock', type: 'toggle', label: 'Clock', min: 0, max: 1, def: 1,
+      note: () => 'The time left, or the time in zen with no limit' },
+    { group: 'Zen', sub: 'Lyrics', key: 'zenLyrics', type: 'choice', label: 'Lyrics', options: [['Off', 0], ['1 line', 1], ['2 lines', 2]],
+      min: 0, max: 2, def: 0,
+      note: () => hasBetterLyrics() ? 'From Better Lyrics. 2 lines: the next line under the current one' : 'Needs the Better Lyrics extension',
+      disabled: () => !hasBetterLyrics() },
+    { group: 'Zen', sub: 'Lyrics', key: 'zenLyricsPos', type: 'choice', label: 'Lyrics position', options: [['Bottom', 0], ['Under title', 1]],
+      min: 0, max: 1, def: 0, dep: 'zenLyrics', note: () => 'Above the buttons, or under the text at the top' },
+    { group: 'Zen', sub: 'Lyrics', key: 'zenLyricsSmooth', type: 'toggle', label: 'Smooth lyrics', min: 0, max: 1, def: 0, dep: 'zenLyrics',
+      note: () => 'Lines slide up and fade, instead of a hard cut' },
+    // how this panel looks: categories on the side (1, Modern) or the original long list (0, Legacy). No group: it is
+    // the switch in the panel's footer, not a row
+    { key: 'setLayout', min: 0, max: 1, def: 1 },
   ];
+  // A row's group is its category (a page in the Modern layout); sub splits a category into cards with a small
+  // heading. Rows are gathered by group and sub wherever they are in the list, so order only matters inside a card.
+  const LATE_GROUPS = ['Zen'];        // these groups go at the end of the panel, after the look groups
+  // Better Lyrics (a separate extension) adds its stylesheet links and an empty overlay div to the page on load,
+  // whether or not lyrics are shown. Its own scripts are in an isolated world, so the page is all we can see.
+  const hasBetterLyrics = () => !!document.querySelector('link[id^="blyrics-style-"], #blyrics-ad-overlay, #blyrics-wrapper');
   /* refraction ("liquid glass"): an SVG displacement filter in the bar's backdrop-filter. The map is drawn for the bar's
      exact size and rounded shape: near the edge every pixel samples the background a little further inside, so it
      bends like the rim of a glass pane. Only Chromium supports url() filters in backdrop-filter; elsewhere the toggle is off. */
@@ -1286,8 +1323,9 @@
   const applyRefraction = () => {
     const on = !!settings.refract && canRefract;
     document.documentElement.classList.toggle('am-refract', on);
-    for (const [dm, k] of refractDisps) dm.setAttribute('scale', String(Math.round(settings.refractStrength * k)));
-    refractBlur.setAttribute('stdDeviation', String(settings.barBlur));      // the bar blur, now done inside the filter
+    const setAttr = (n, a, v) => { if (n.getAttribute(a) !== v) n.setAttribute(a, v); };   // a changed filter repaints the bar
+    for (const [dm, k] of refractDisps) setAttr(dm, 'scale', String(Math.round(settings.refractStrength * k)));
+    setAttr(refractBlur, 'stdDeviation', String(settings.barBlur));      // the bar blur, now done inside the filter
     if (on) updateRefractMap();
   };
 
@@ -1302,12 +1340,19 @@
     return out;
   };
   const settings = loadSettings();
+  /* speed: the values go in one small style sheet, each only on the elements that use it (s.scope), not on <html>.
+     A custom property set on <html> is inherited by every element of YTM's very big page, so every change (each step
+     of a slider) made the browser restyle all of it. The sheet is only rewritten when a value really changed. */
+  const setVars = el('style', null, document.head);
   const applySettings = () => {
+    const by = new Map();
     for (const s of SETTINGS) {
       if (!s.css) continue;
       const [name, value] = s.css(settings[s.key]);
-      document.documentElement.style.setProperty(name, String(value));
+      by.set(s.scope, (by.get(s.scope) || '') + `${name}: ${value}; `);
     }
+    const css = [...by].map(([sel, decl]) => `${sel} { ${decl}}`).join('\n');
+    if (setVars.textContent !== css) setVars.textContent = css;
     document.documentElement.classList.toggle('am-easy-track', !!settings.easyTrack);
     applyRefraction();
   };
@@ -1319,6 +1364,15 @@
   const P_CLOSE = 'M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z';
 
   let setEl = null;
+  let setCat = '';                     // Modern layout: the category shown (kept between openings)
+  // the panel built again in place (after the layout setting changes), without the open animation
+  const rebuildSettings = () => {
+    if (!setEl) return;
+    const old = setEl;
+    setEl = null;
+    old.remove();
+    openSettings(true);
+  };
   const closeSettings = () => {
     if (!setEl) return;
     const s = setEl;
@@ -1326,10 +1380,10 @@
     s.classList.add('am-set-out');
     setTimeout(() => s.remove(), 180);
   };
-  const openSettings = () => {
+  const openSettings = quiet => {
     if (setEl) return;
     closeMenu();
-    const back = el('div', 'am-set-back', document.body);
+    const back = el('div', 'am-set-back' + (quiet === true ? ' am-set-quiet' : ''), document.body);
     const p = el('div', 'am-set', back);
     p.setAttribute('role', 'dialog');
     p.setAttribute('aria-label', 'r1ytm settings');
@@ -1346,16 +1400,44 @@
     x.addEventListener('click', closeSettings);
 
     const ranges = [], deps = [];
-    const showDeps = () => deps.forEach(([row, dep]) => row.classList.toggle('am-set-dim', !settings[dep]));
-    let section = null, lastGroup = '';
-    for (const s of SETTINGS) {
-      if (s.group !== lastGroup) {
-        lastGroup = s.group;
-        el('div', 'am-set-group', p).textContent = s.group;
-        section = el('div', 'am-set-card', p);
+    // a row whose dep is off (or not available) is dimmed
+    const depOff = key => { const d = SETTINGS.find(x => x.key === key); return !settings[key] || !!(d && d.disabled && d.disabled()); };
+    const showDeps = () => deps.forEach(([row, dep]) => row.classList.toggle('am-set-dim', depOff(dep)));
+    const addRow = (s, section) => {
+      if (s.type === 'choice') {
+        const off = !!(s.disabled && s.disabled());       // not available here: grayed out, first option shown
+        const row = el('div', 'am-set-row am-set-inline' + (off ? ' am-set-na' : ''), section);
+        if (s.dep) deps.push([row, s.dep]);
+        const lt = el('div', 'am-set-ltext', row);
+        el('div', 'am-set-label', lt).textContent = s.label;
+        if (s.note) el('div', 'am-set-note', lt).textContent = s.note();
+        const seg = el('div', 'am-set-seg', row);
+        seg.setAttribute('role', 'group');
+        seg.setAttribute('aria-label', s.label);
+        const btns = s.options.map(([t, v]) => {
+          const b = el('button', 'am-set-segbtn', seg);
+          b.textContent = t;
+          b.disabled = off;
+          b.addEventListener('click', () => {
+            const was = settings[s.key];
+            settings[s.key] = v; applySettings(); saveSettings(); show();
+            if (s.change && was !== v) s.change();
+          });
+          return [b, v];
+        });
+        const show = () => {
+          const cur = off ? s.options[0][1] : settings[s.key];
+          btns.forEach(([b, v]) => { b.classList.toggle('am-on', cur === v); b.setAttribute('aria-pressed', String(cur === v)); });
+          showDeps();
+        };
+        show();
+        ranges.push(show);
+        return;
       }
       if (s.type === 'toggle') {
-        const row = el('div', 'am-set-row am-set-inline', section);
+        const off = !!(s.disabled && s.disabled());       // not available here: grayed out and shown as off
+        const row = el('div', 'am-set-row am-set-inline' + (off ? ' am-set-na' : ''), section);
+        if (s.dep) deps.push([row, s.dep]);
         const lt = el('div', 'am-set-ltext', row);
         el('div', 'am-set-label', lt).textContent = s.label;
         if (s.note) el('div', 'am-set-note', lt).textContent = s.note();
@@ -1363,8 +1445,8 @@
         sw.setAttribute('role', 'switch');
         sw.setAttribute('aria-label', s.label);
         const show = () => {
-          sw.classList.toggle('am-on', !!settings[s.key]);
-          sw.setAttribute('aria-checked', String(!!settings[s.key]));
+          sw.classList.toggle('am-on', !off && !!settings[s.key]);
+          sw.setAttribute('aria-checked', String(!off && !!settings[s.key]));
           showDeps();
         };
         sw.addEventListener('click', () => {
@@ -1373,10 +1455,10 @@
           saveSettings();
           show();
         });
-        if (s.disabled && s.disabled()) { sw.disabled = true; sw.classList.add('am-set-off'); }
+        if (off) { sw.disabled = true; sw.classList.add('am-set-off'); }
         show();
         ranges.push(show);
-        continue;
+        return;
       }
       const row = el('label', 'am-set-row', section);
       if (s.dep) deps.push([row, s.dep]);
@@ -1390,18 +1472,40 @@
         val.textContent = settings[s.key] + s.unit;
         r.style.setProperty('--p', ((settings[s.key] - s.min) / (s.max - s.min) * 100) + '%');
       };
+      // while dragging: the number follows at once, the look once per frame; saved when let go
+      let raf = 0;
       r.addEventListener('input', () => {
         settings[s.key] = +r.value;
-        applySettings();
         show();
-        saveSettings();
+        if (!raf) raf = requestAnimationFrame(() => { raf = 0; applySettings(); });
       });
+      r.addEventListener('change', saveSettings);
       show();
       ranges.push(show);
-    }
-    showDeps();
+    };
+    let sizeCard = null;
+    const addGroups = list => {
+      const groups = new Map();                 // group -> sub -> rows, in order of first appearance
+      for (const s of list) {
+        if (!s.group) continue;
+        if (!groups.has(s.group)) groups.set(s.group, new Map());
+        const subs = groups.get(s.group), k = s.sub || '';
+        if (!subs.has(k)) subs.set(k, []);
+        subs.get(k).push(s);
+      }
+      for (const [g, subs] of groups) {
+        el('div', 'am-set-group', p).textContent = g;
+        for (const [sub, rows] of subs) {
+          if (sub) el('div', 'am-set-subhead', p).textContent = sub;
+          const card = el('div', 'am-set-card', p);
+          if (sub === 'Size') sizeCard = card;
+          rows.forEach(s => addRow(s, card));
+        }
+      }
+    };
+    addGroups(SETTINGS.filter(s => !LATE_GROUPS.includes(s.group)));
     // bar layout (full / compact), in the size card
-    const lay = el('div', 'am-set-row am-set-inline', section);
+    const lay = el('div', 'am-set-row am-set-inline', sizeCard);
     el('span', 'am-set-label', lay).textContent = 'Bar layout';
     const seg = el('div', 'am-set-seg', lay);
     const segBtns = [['Full', false], ['Compact', true]].map(([t, compact]) => {
@@ -1413,11 +1517,14 @@
     const showSeg = () => segBtns.forEach(([b, c]) => b.classList.toggle('am-on', bar.classList.contains('am-compact') === c));
     showSeg();
     const lookRefresh = buildLookSettings(p);      // Font + Background groups
+    addGroups(SETTINGS.filter(s => LATE_GROUPS.includes(s.group)));
+    showDeps();
 
     const foot = el('div', 'am-set-foot', p);
     const reset = el('button', 'am-set-btn', foot);
     reset.textContent = 'Reset to defaults';
     reset.addEventListener('click', () => {
+      const wasLayout = settings.setLayout;
       for (const s of SETTINGS) settings[s.key] = s.def;
       applySettings();
       saveSettings();
@@ -1432,10 +1539,58 @@
       applyFont();
       applyBg();
       lookRefresh();
+      if (settings.setLayout !== wasLayout) rebuildSettings();
     });
+    // the panel's own layout, between Reset and Done
+    const fl = el('div', 'am-set-footlay', foot);
+    el('span', 'am-set-note', fl).textContent = 'Layout';
+    const flSeg = el('div', 'am-set-seg', fl);
+    flSeg.setAttribute('role', 'group');
+    flSeg.setAttribute('aria-label', 'Settings layout');
+    for (const [t, v] of [['Modern', 1], ['Legacy', 0]]) {
+      const b = el('button', 'am-set-segbtn' + (settings.setLayout === v ? ' am-on' : ''), flSeg);
+      b.textContent = t;
+      b.title = v ? 'Categories on the side' : 'One long list';
+      b.addEventListener('click', () => {
+        if (settings.setLayout === v) return;
+        settings.setLayout = v;
+        saveSettings();
+        rebuildSettings();
+      });
+    }
     const done = el('button', 'am-set-btn am-set-primary', foot);
     done.textContent = 'Done';
     done.addEventListener('click', closeSettings);
+
+    // Modern layout: the same groups, each moved into its own page; a sidebar picks the page. A group is its heading
+    // (.am-set-group) and everything after it up to the next heading.
+    if (settings.setLayout) {
+      p.classList.add('am-set-modern');
+      const nav = el('div', 'am-set-nav'), pane = el('div', 'am-set-pane');
+      nav.setAttribute('role', 'tablist');
+      const secs = [];
+      let sec = null;
+      for (const n of [...p.children]) {
+        if (n === head || n === foot) continue;
+        if (n.classList.contains('am-set-group')) { sec = el('div', 'am-set-section', pane); secs.push([n.textContent, sec]); }
+        if (sec) sec.append(n);
+      }
+      head.after(nav, pane);
+      const navBtns = secs.map(([t]) => {
+        const b = el('button', 'am-set-navbtn', nav);
+        b.textContent = t;
+        b.setAttribute('role', 'tab');
+        b.addEventListener('click', () => showCat(t));
+        return [b, t];
+      });
+      const showCat = name => {
+        setCat = name;
+        secs.forEach(([t, s]) => { s.hidden = t !== name; });
+        navBtns.forEach(([b, t]) => { b.classList.toggle('am-on', t === name); b.setAttribute('aria-selected', String(t === name)); });
+        pane.scrollTop = 0;
+      };
+      if (secs.length) showCat(secs.some(([t]) => t === setCat) ? setCat : secs[0][0]);
+    }
 
     // close on a click on the dimmed backdrop or Escape; keys stay inside (no YTM hotkeys while adjusting)
     back.addEventListener('click', e => { if (e.target === back) closeSettings(); });
@@ -1546,9 +1701,13 @@
       backdrop-filter: blur(40px) saturate(190%); -webkit-backdrop-filter: blur(40px) saturate(190%);
       border: 1px solid rgb(255 255 255 / .12);
       box-shadow: 0 24px 70px rgb(0 0 0 / .5), inset 0 1px 0 rgb(255 255 255 / .07);
-      animation: am-menu-in .24s cubic-bezier(.2, .9, .25, 1.05); }
-    .am-set-out .am-set { scale: .97; transition: scale .16s ease; }
+      animation: am-set-in .16s cubic-bezier(.2, .8, .2, 1); }
+    .am-set-out .am-set { translate: 0 6px; transition: translate .14s ease; }
     @keyframes am-set-fade { from { opacity: 0; } }
+    /* opening: a short fade and lift. Scaling a blurred panel re-blurs it on every frame, so it doesn't scale */
+    @keyframes am-set-in { from { opacity: 0; translate: 0 8px; } }
+    /* Legacy (one long list): cards out of view are not drawn until they are scrolled to */
+    .am-set:not(.am-set-modern):not(.am-gm-panel) .am-set-card { content-visibility: auto; contain-intrinsic-size: auto 220px; }
 
     .am-set-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
     .am-set-logo svg { width: 34px; height: 34px; display: block; }
@@ -1595,6 +1754,16 @@
     .am-set-switch.am-on::after { translate: 16px 0; }
     .am-set-switch:focus-visible { box-shadow: 0 0 0 3px rgb(255 255 255 / .2); }
     .am-set-switch.am-set-off { opacity: .4; cursor: default; }
+    .am-set-na .am-set-label, .am-set-na .am-set-seg { opacity: .45; }
+    /* a small heading over each card of a category (Transparency, Glass... inside Bar & menus) */
+    .am-set-subhead { font-size: 12.5px; font-weight: 600; color: rgb(255 255 255 / .55); margin: 14px 8px 6px; }
+    .am-set-group + .am-set-subhead { margin-top: 4px; }
+    .am-set-footlay { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+    .am-set-footlay > .am-set-note { margin: 0; }
+    .am-set-seg { flex-shrink: 0; }
+    .am-set-segbtn:disabled { cursor: default; }
+    .am-set-segbtn { min-width: 1.1em; text-align: center; }
+    .am-set-segbtn:disabled:hover { color: rgb(255 255 255 / .7); }
     .am-set-seg { display: flex; padding: 3px; border-radius: 10px; background: rgb(0 0 0 / .25); }
     .am-set-segbtn { all: unset; cursor: pointer; padding: 5px 12px; border-radius: 8px; font-size: 12.5px;
       color: rgb(255 255 255 / .7); transition: background .15s, color .15s; }
@@ -1608,6 +1777,31 @@
     .am-set-btn:hover, .am-set-btn:focus-visible { background: rgb(255 255 255 / .1); color: #fff; }
     .am-set-primary { background: #fff; color: #111; font-weight: 600; padding: 8px 20px; }
     .am-set-primary:hover, .am-set-primary:focus-visible { background: rgb(255 255 255 / .85); color: #111; }
+
+    /* Modern layout: a wide dashboard, categories on the left, the picked category on the right */
+    .am-set-quiet, .am-set-quiet .am-set { animation: none; }
+    .am-set.am-set-modern { width: min(860px, 100%); height: min(620px, calc(100vh - 32px)); padding: 0; overflow: hidden;
+      display: grid; grid-template-columns: 210px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+    .am-set-modern > .am-set-head { grid-column: 1 / -1; margin: 0; padding: 16px 18px 14px;
+      border-bottom: 1px solid rgb(255 255 255 / .08); }
+    .am-set-nav { display: flex; flex-direction: column; gap: 2px; padding: 10px; overflow-y: auto; scrollbar-width: none;
+      border-right: 1px solid rgb(255 255 255 / .08); }
+    .am-set-navbtn { all: unset; box-sizing: border-box; cursor: pointer; padding: 9px 12px; border-radius: 10px; font-size: 13.5px;
+      color: rgb(255 255 255 / .65); white-space: nowrap; transition: background .15s, color .15s; }
+    .am-set-navbtn:hover { color: #fff; background: rgb(255 255 255 / .06); }
+    .am-set-navbtn.am-on { color: #fff; background: rgb(255 255 255 / .13); font-weight: 600; }
+    .am-set-navbtn:focus-visible { box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / .4); }
+    .am-set-pane { overflow-y: auto; padding: 4px 22px 22px; scrollbar-width: thin; }
+    .am-set-section[hidden] { display: none; }
+    .am-set-modern .am-set-section > .am-set-group { font-size: 20px; font-weight: 700; letter-spacing: 0; text-transform: none;
+      color: #fff; margin: 16px 2px 12px; }
+    .am-set-modern > .am-set-foot { grid-column: 1 / -1; margin: 0; padding: 12px 18px;
+      border-top: 1px solid rgb(255 255 255 / .08); }
+    /* narrow windows: the categories become a row of tabs above the page */
+    @media (max-width: 640px) {
+      .am-set.am-set-modern { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
+      .am-set-nav { flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid rgb(255 255 255 / .08); }
+    }
 
     @media (prefers-reduced-motion: reduce) { .am-set-back, .am-set { animation: none; } }
   `;
@@ -1655,7 +1849,7 @@
     'Work Sans', 'Lato', 'Open Sans', 'Raleway', 'Josefin Sans', 'Syne', 'Unbounded', 'Oswald', 'Bebas Neue',
     'Playfair Display', 'Fraunces', 'Lora', 'Merriweather', 'JetBrains Mono', 'Space Mono', 'Comfortaa', 'Pacifico', 'Caveat'];
   const googleStyle = el('style');
-  let fileFace = null, fontRun = 0;
+  let fileFace = null, fontRun = 0, fontMsg = '';
   const cleanName = s => s.trim().replace(/["\\;{}]/g, '');
   // installed? Text measured in the font vs. the plain fallback: no difference for every fallback = not installed
   const fontCtx = document.createElement('canvas').getContext('2d');
@@ -1704,6 +1898,7 @@
     if (look.font !== 'google') googleStyle.remove();
     html.style.setProperty('--am-font', fam ? `${fam}, ${BASE_FONT}` : BASE_FONT);
     html.classList.toggle('am-font-all', !!fam && look.fontScope === 'all');
+    fontMsg = msg;
     return msg;
   };
 
@@ -1734,8 +1929,9 @@
   const blurFor = k => { const v = (look.blurPages || {})[k]; return Number.isFinite(v) ? v : look.bgBlur; };
   const applyBanner = () => html.classList.toggle('am-hide-banner', !!look.hideBanner);
   const applyBgVars = () => {
-    html.style.setProperty('--am-bg-dim', String(look.bg === 'color' ? 0 : dimFor(curPage) / 100));
-    html.style.setProperty('--am-bg-blur', (look.bg === 'color' ? 0 : blurFor(curPage)) + 'px');
+    // on the background layer itself, not <html> (see setVars in the settings): a Dim / Blur drag restyles only it
+    bgLayer.style.setProperty('--am-bg-dim', String(look.bg === 'color' ? 0 : dimFor(curPage) / 100));
+    bgLayer.style.setProperty('--am-bg-blur', (look.bg === 'color' ? 0 : blurFor(curPage)) + 'px');
   };
   const restoreCleared = () => {
     for (const n of cleared) { n.style.removeProperty('background-color'); n.style.removeProperty('box-shadow'); }
@@ -1968,7 +2164,9 @@
         renderFont();
       }, 'am-set-wide');
     const fBody = el('div', 'am-set-sub', fCard);
-    const renderFont = () => {
+    // apply = false when the panel is only being drawn: the font is already applied (applying it again restyles the
+    // whole page and, for a Google font, downloads it again), so only the last status line is shown
+    const renderFont = (apply = true) => {
       fBody.replaceChildren();
       fNote = null;
       if (look.font !== 'default') {
@@ -2008,9 +2206,10 @@
         ui.seg(sc, [['All of YT Music', 'all'], ['r1ytm only', 'bar']], () => look.fontScope,
           v => { look.fontScope = v; saveLook(); runFont(); });
       }
-      runFont();
+      if (apply) runFont();
+      else if (fNote) fNote.textContent = fontMsg;
     };
-    renderFont();
+    renderFont(false);
 
     /* background */
     el('div', 'am-set-group', p).textContent = 'Background';
@@ -2108,7 +2307,7 @@
       ui.toggle(bBody, 'Remove header shadow', () => look.noArtistShade, v => { look.noArtistShade = v; saveLook(); applyArtist(); });
     };
     renderBg();
-    return () => { fSeg(); renderFont(); bSeg(); renderBg(); };
+    return () => { fSeg(); renderFont(false); bSeg(); renderBg(); };
   };
 
   /* ---------- gradient maker ---------- */
@@ -2628,6 +2827,8 @@
   // straight back into zen until it's over. "No limit" runs until closed, with close available from the start.
   // Power: while zen is up the page behind it isn't rendered at all (content-visibility), r1ytm's main loop pauses, the
   // zen clock ticks once a second, and a playing music video drops to its lowest picture quality (audio is untouched).
+  // The Zen group in the settings picks the layout, the two fonts, which parts show, and up to two lines of lyrics
+  // (read from the Better Lyrics extension when it is installed). They apply the next time zen opens.
   const P_ZEN = 'M12 2c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm9 14v-2c-2.24 0-4.16-.96-5.6-2.68l-1.34-1.6A1.98 1.98 0 0 0 12.53 9h-1.05c-.59 0-1.15.26-1.53.71l-1.34 1.6C7.16 13.04 5.24 14 3 14v2c2.77 0 5.19-1.17 7-3.25V15l-3.88 1.55c-.67.27-1.12.93-1.12 1.66C5 19.2 5.8 20 6.79 20H9v-.5a2.5 2.5 0 0 1 2.5-2.5h3c.28 0 .5.22.5.5s-.22.5-.5.5h-3c-.83 0-1.5.67-1.5 1.5v.5h7.21c.99 0 1.79-.8 1.79-1.79 0-.73-.45-1.39-1.12-1.66L14 15v-2.25c1.81 2.08 4.23 3.25 7 3.25z';
   const ZEN_KEY = 'am-zen';                      // { until, start } (epoch ms) while a zen session runs; until 0 = no limit
   const ZEN_MIN_KEY = 'am-zen-mins';             // last picked length in minutes; 0 = no limit
@@ -2705,8 +2906,12 @@
   const greeting = () => {
     const h = new Date().getHours();
     const part = h >= 5 && h < 12 ? 'MORNING' : h >= 12 && h < 17 ? 'AFTERNOON' : h >= 17 && h < 22 ? 'EVENING' : 'NIGHT';
-    return zenName ? [`GOOD ${part},`, zenName.toUpperCase()] : ['GOOD', part];
+    const g = zenName ? [`GOOD ${part},`, zenName.toUpperCase()] : ['GOOD', part];
+    g[g.length - 1] = endWith(g[g.length - 1], settings.zenHeadEnd);
+    return g;
   };
+  // the punctuation picked for a line in the settings (1 full stop, 2 comma), unless it already ends in some
+  const endWith = (s, k) => !s || !k || /[.,!?…;:]$/.test(s) ? s : s + (k === 1 ? '.' : ',');
   const setHead = head => {
     const g = greeting(), key = g.join('\n');
     if (head.dataset.text === key) return false;
@@ -2777,14 +2982,17 @@
     if (!c || !big) return;
     // widescreen: title block top left over about two thirds of the width, the artist bottom right, empty space between
     // (like a 16:9 title card). Narrower screens (4:3, portrait): everything stacked and centered.
-    const wide = innerWidth / innerHeight >= 1.45;
+    const lay = settings.zenLayout;                    // 0 auto, 1 always wide, 2 always stacked
+    const wide = lay === 1 || (lay !== 2 && innerWidth / innerHeight >= 1.45);
     zenEl.classList.toggle('am-zwide', wide);
     const sub = zenEl.querySelector('.am-zsub');
     if (sub && sub.parentNode !== (wide ? zenEl : c)) {
       if (wide) zenEl.append(sub);
       else c.insertBefore(sub, c.querySelector('.am-zclock'));      // back above the clock (null on the setup screen: last)
     }
-    const sx = parseFloat(getComputedStyle(html).getPropertyValue('--am-zsx')) || .66;
+    const subOn = !!sub && sub.getClientRects().length > 0;       // the artist can be hidden in the settings
+    const lbox = zenUi.lyric && zenUi.lyric.parentNode === zenEl ? zenUi.lyric : null;   // under the title it's in the card
+    const sx = parseFloat(getComputedStyle(zenEl).getPropertyValue('--zbx')) || .66;     // 1 when the title font isn't the serif
     const W = c.clientWidth, H = innerHeight;
     const widest = spans => Math.max(1, ...spans.map(s => s.offsetWidth * sx));
     let B = wide ? Math.min(W * .19, H * .21) : Math.min(W * .17, H * .19);
@@ -2809,12 +3017,23 @@
       big.replaceChildren();
       best.lines.forEach(t => zline(big, 'am-zserif', t));
       big.style.fontSize = best.size + 'px';
-      const ctlTop = zenUi.ctl ? zenUi.ctl.getBoundingClientRect().top : H;
+      let ctlTop = zenUi.ctl ? zenUi.ctl.getBoundingClientRect().top : H;
+      if (lbox) {
+        // the lyric box (a fixed height, empty or not) sits just above the controls; the card stays above it, so a
+        // new line never changes the size of the title. Widescreen: it stops short of the artist on the right.
+        lbox.style.bottom = (H - ctlTop + Math.max(16, B * .22)) + 'px';
+        lbox.style.right = '';
+        if (wide && subOn) {
+          const sr = sub.getBoundingClientRect();
+          lbox.style.right = Math.max(0, innerWidth - sr.left + B * .3) + 'px';
+        }
+        ctlTop = lbox.getBoundingClientRect().top;
+      }
       const h = c.offsetHeight;
       let room;
       if (wide) {
         // the block hangs from the top; it must stay above the controls, and above the artist where the two overlap
-        const cr = c.getBoundingClientRect(), sr = sub ? sub.getBoundingClientRect() : null;
+        const cr = c.getBoundingClientRect(), sr = subOn ? sub.getBoundingClientRect() : null;
         let bottom = ctlTop - 24;
         if (sr && sr.left < cr.right) bottom = Math.min(bottom, sr.top - B * .15);
         room = bottom - cr.top;
@@ -2830,6 +3049,8 @@
   /* the overlay */
   const zenShell = () => {
     const z = el('div', 'am-zen am-zen-black', document.body);
+    z.classList.add('am-zbf-' + (['serif', 'sans', 'own'][settings.zenBigFont] || 'serif'),
+                    'am-zsf-' + (['sans', 'serif', 'own'][settings.zenSmallFont] || 'sans'));
     z.tabIndex = -1;
     z.setAttribute('role', 'dialog');
     z.setAttribute('aria-modal', 'true');
@@ -2918,6 +3139,11 @@
     const z = zenEl = zenShell();
     if (old) { z.classList.add('am-zen-now'); old.remove(); }        // from setup: straight to black, no fade
     inertPage();
+    // parts turned off in the settings (hidden with CSS, so the fitting just sees nothing there)
+    if (!settings.zenGreeting) z.classList.add('am-zno-head');
+    if (!settings.zenAlbum) z.classList.add('am-zno-album');
+    if (!settings.zenArtist) z.classList.add('am-zno-artist');
+    if (!settings.zenClock) z.classList.add('am-zno-clock');
     const c = el('div', 'am-zc', z);
     zenUi.head = el('div', 'am-zhead', c);
     setHead(zenUi.head);
@@ -2925,6 +3151,14 @@
     zenUi.album = el('div', 'am-zalbum', c);
     zenUi.sub = el('div', 'am-zsub', c);          // stacked layout: artist under the album (widescreen: bottom right)
     zenUi.clock = el('div', 'am-zclock', c);
+    // lyrics: the line being sung (wraps to 2 rows at most) and, with "2 lines", the next one dimmed under it (1 row)
+    if (settings.zenLyrics) {
+      const under = settings.zenLyricsPos === 1;
+      const box = zenUi.lyric = el('div', 'am-zlyric' + (under ? ' am-zlyric-in' : '') + (settings.zenLyrics === 2 ? ' am-zly2' : ''), under ? c : z);
+      zenUi.lyCur = el('span', 'am-zly-cur', box);
+      if (settings.zenLyrics === 2) zenUi.lyNext = el('span', 'am-zly-next', box);
+    }
+    lyr.vid = ''; lyr.sig = ''; lyr.staleSig = null;
 
     const ctl = zenUi.ctl = el('div', 'am-zctl', z);
     zenUi.play = zbtn(ctl, 'PAUSE', clickYt('PlayPause'));
@@ -2958,6 +3192,7 @@
       store.set(ZEN_KEY, 'null');
       restoreMediaKeys();
       restoreQuality();
+      restoreLyricsTab();
     }
     z.classList.add('am-zen-out');
     setTimeout(() => z.remove(), 400);
@@ -3091,6 +3326,100 @@
     } catch {}
   };
 
+  /* one line of lyrics, from Better Lyrics (setting "Lyrics line"). Better Lyrics only loads lyrics while YTM's Lyrics
+     tab is selected, so zen selects it (and puts the tab that was open back on close). It also stops animating its
+     own view while that view is hidden, which it is behind zen, so its "active" class can't be trusted here: the
+     line is picked from the start / length (seconds) it writes on every line (data-time / data-duration) against
+     the video's own time. Its container doesn't say which song the lyrics belong to, so after a song change the
+     old lines are ignored until they are replaced. */
+  const LYRIC_LEAD = .15;                        // show a line this much early (s): reads as on time
+  const lyr = { vid: '', sig: '', staleSig: null };
+  const lyricTexts = new WeakMap();
+  let lyricTabPrev = -1, lyricTabTry = 0;
+  const lyricTabs = () => document.getElementsByClassName('tab-header style-scope ytmusic-player-page');   // Up next, Lyrics, Related
+  const selectLyricsTab = () => {
+    const tabs = lyricTabs(), lt = tabs[1];
+    if (!lt || lt.getAttribute('aria-selected') === 'true' || performance.now() < lyricTabTry) return;
+    lyricTabTry = performance.now() + 3000;
+    if (lyricTabPrev < 0) lyricTabPrev = [...tabs].findIndex(t => t.getAttribute('aria-selected') === 'true');
+    lt.click();
+  };
+  const restoreLyricsTab = () => {
+    const t = lyricTabPrev >= 0 && lyricTabs()[lyricTabPrev];
+    lyricTabPrev = -1; lyricTabTry = 0;
+    if (t && t.getAttribute('aria-selected') !== 'true') t.click();
+  };
+  // the sung text of a line: its main row without the karaoke highlight copy, translation, romanization or
+  // background vocals
+  const lyricText = line => {
+    let t = lyricTexts.get(line);
+    if (t === undefined) {
+      const c = (line.querySelector(':scope > .blyrics-line-main') || line).cloneNode(true);
+      c.querySelectorAll('.blyrics-highlight-run, .blyrics--translated, .blyrics--romanized, .blyrics-background-line, .blyrics-background-lyric')
+        .forEach(n => n.remove());
+      t = c.textContent.replace(/\s+/g, ' ').trim();
+      if (line.dataset.instrumental === 'true') t = '';
+      lyricTexts.set(line, t);
+    }
+    return t;
+  };
+  // -> { text, nextText, next } (next: when the next line starts, s) or null
+  const currentLyric = v => {
+    const box = document.querySelector('#blyrics-wrapper .blyrics-container');
+    const ok = box && box.dataset.noLyrics !== 'true' && box.dataset.sync !== 'none';
+    const lines = ok ? [...box.querySelectorAll('.blyrics--line[data-time]')] : [];
+    const last = lines[lines.length - 1];
+    const sig = last ? lines.length + '|' + lines[0].dataset.time + '|' + lyricText(lines[0]) + '|' + last.dataset.time : '';
+    // new song: the lines on screen now (if any) belong to the last one until they change
+    const id = curVideoId();
+    if (id !== lyr.vid) { lyr.staleSig = lyr.vid && lyr.sig ? lyr.sig : null; lyr.vid = id; }
+    lyr.sig = sig;
+    if (!sig) return null;
+    if (lyr.staleSig !== null) { if (sig === lyr.staleSig) return null; lyr.staleSig = null; }
+    if (v.duration && +last.dataset.time > v.duration + 1) return null;      // can't be this song's
+    const t = v.currentTime + LYRIC_LEAD;
+    let i = -1;
+    for (let k = 0; k < lines.length && +lines[k].dataset.time <= t; k++) i = k;
+    const nl = lines[i + 1], next = nl ? +nl.dataset.time : 0, nextText = nl ? lyricText(nl) : '';
+    if (i < 0) return { text: '', nextText, next };
+    const ln = lines[i], end = +ln.dataset.time + (+ln.dataset.duration || 0);
+    // a long gap after a line (no instrumental line in between): the line goes when it's over
+    return { text: +ln.dataset.duration > 0 && t > end + 1.5 ? '' : lyricText(ln), nextText, next };
+  };
+
+  /* "Smooth lyrics": the old line drifts up and fades out (a copy of it, so the new text can go in right away), the
+     new one comes up into place. With 2 lines the next line is already on screen, so it slides up from where it was
+     and brightens; the line after it fades in below. Only opacity and translate move (cheap for the browser). */
+  const LYRIC_MOVE_MS = 420, LYRIC_EASE = 'cubic-bezier(.2, .8, .2, 1)';
+  const lyricMove = (curTxt, nextTxt) => {
+    const box = zenUi.lyric, c = zenUi.lyCur, n = zenUi.lyNext;
+    const curChanged = c.textContent !== curTxt;
+    const fromNext = curChanged && !!n && !!curTxt && n.textContent === curTxt;
+    const nextTop = n ? n.offsetTop : 0;
+    if (curChanged && c.textContent) {
+      const ghost = c.cloneNode(true);
+      ghost.classList.add('am-zly-ghost');
+      Object.assign(ghost.style, { left: c.offsetLeft + 'px', top: c.offsetTop + 'px', width: c.offsetWidth + 'px' });
+      box.append(ghost);
+      const a = ghost.animate([{ opacity: .85, translate: '0 0' }, { opacity: 0, translate: '0 -.6em' }],
+        { duration: LYRIC_MOVE_MS, easing: LYRIC_EASE });
+      a.onfinish = a.oncancel = () => ghost.remove();
+    }
+    const nextChanged = !!n && n.textContent !== nextTxt;
+    c.textContent = curTxt;
+    if (n) n.textContent = nextTxt;
+    if (curChanged && curTxt) {
+      c.animate(fromNext
+        ? [{ opacity: .35, translate: `0 ${nextTop - c.offsetTop}px` }, { opacity: .85, translate: '0 0' }]
+        : [{ opacity: 0, translate: '0 .5em' }, { opacity: .85, translate: '0 0' }],
+        { duration: LYRIC_MOVE_MS, easing: LYRIC_EASE });
+    }
+    if (nextChanged && nextTxt) {
+      n.animate([{ opacity: 0, translate: '0 .5em' }, { opacity: .35, translate: '0 0' }],
+        { duration: LYRIC_MOVE_MS, easing: LYRIC_EASE, delay: 90, fill: 'backwards' });
+    }
+  };
+
   // the zen loop: once a second, just after each whole second so the clock never skips or doubles; every 250ms near
   // the end of a song while "sleep at the end of this song" is set (it pauses in the last 0.6s)
   const zenSchedule = () => {
@@ -3098,7 +3427,13 @@
     if (zenMode !== 'on') return;
     const v = video();
     const nearEnd = SLEEP_STEPS[sleepIdx] === 'end' && v && v.duration && v.duration - v.currentTime < 2;
-    zenTick = setTimeout(() => { zenUpdate(); zenSchedule(); }, nearEnd ? 250 : 1000 - Date.now() % 1000 + 5);
+    let wait = nearEnd ? 250 : 1000 - Date.now() % 1000 + 5;
+    // a lyric line: wake right when the next one starts (not more often than that)
+    if (zenUi.lyricNext && v && !v.paused && !document.hidden) {
+      const ms = (zenUi.lyricNext - LYRIC_LEAD - v.currentTime) / (v.playbackRate || 1) * 1000 + 15;
+      if (ms > 0) wait = Math.min(wait, Math.max(40, ms));
+    }
+    zenTick = setTimeout(() => { zenUpdate(); zenSchedule(); }, wait);
   };
 
   const zenUpdate = () => {
@@ -3119,12 +3454,12 @@
       if (t + '\n' + a + '\n' + al !== zenShown || headChanged) {
         zenShown = t + '\n' + a + '\n' + al;
         // the album under the title (left out when there's none, or it's just the title again)
-        zenUi.album.textContent = al && al.trim().toLowerCase() !== t.trim().toLowerCase() ? al : '';
+        zenUi.album.textContent = al && al.trim().toLowerCase() !== t.trim().toLowerCase() ? endWith(al.trim(), settings.zenAlbumEnd) : '';
         const clean = t.replace(/\s*[([][^)\]]*[)\]]/g, '').trim() || t;    // "(feat. …)", "[Official Video]" off the big line
-        zenUi.big.dataset.text = (clean || 'SILENCE').toUpperCase();
-        // a full stop after the artist, like a title card line (not when it already ends in punctuation)
+        zenUi.big.dataset.text = clean ? endWith(clean.toUpperCase(), settings.zenTitleEnd) : 'SILENCE';
+        // the artist ends with a full stop by default, like a title card line
         const who = a || 'Unknown artist';
-        zenUi.sub.textContent = !t ? 'Nothing is playing.' : /[.!?…]$/.test(who) ? who : who + '.';
+        zenUi.sub.textContent = !t ? 'Nothing is playing.' : endWith(who, settings.zenDot);
         fitZen();
       }
 
@@ -3134,6 +3469,22 @@
       zenUi.close.textContent = locked ? 'CLOSE · LOCKED' : 'CLOSE';
       zenUi.close.title = locked ? `Unlocks in ${fmtTime(left)}` : 'Leave zen mode';
       zenUi.close.classList.toggle('am-on', !locked);
+
+      // lyric line: a hard cut to the new line like the rest of the card, or (setting "Smooth lyrics") a slide
+      if (zenUi.lyric) {
+        const on = hasBetterLyrics();
+        if (on) selectLyricsTab();
+        const cur = on && v ? currentLyric(v) : null;
+        const curTxt = cur ? cur.text : '', nextTxt = cur ? cur.nextText : '';
+        if (zenUi.lyCur.textContent !== curTxt || (zenUi.lyNext && zenUi.lyNext.textContent !== nextTxt)) {
+          if (settings.zenLyricsSmooth && !reduceMotion.matches) lyricMove(curTxt, nextTxt);
+          else {
+            zenUi.lyCur.textContent = curTxt;
+            if (zenUi.lyNext) zenUi.lyNext.textContent = nextTxt;
+          }
+        }
+        zenUi.lyricNext = cur ? cur.next : 0;
+      }
 
       // play / pause
       zenUi.play.textContent = !v || v.paused ? 'PLAY' : 'PAUSE';
@@ -3151,7 +3502,7 @@
       if (v && !v.paused) v.pause();
       sleepIdx = 0; sleepAt = 0;
     }
-    if (!shownNow) return;
+    if (!shownNow) { zenUi.lyricNext = 0; return; }
     const st2 = SLEEP_STEPS[sleepIdx];
     zenUi.sleep.textContent = !st2 ? 'SLEEP: OFF' : st2 === 'end' ? 'SLEEP: END OF SONG' : `SLEEP:${fmtTime(sleepAt - now)}`;
     zenUi.sleep.classList.toggle('am-on', !!st2);
@@ -3188,7 +3539,17 @@
   zenStyle.textContent = `
     .am-zen { position: fixed; inset: 0; z-index: 2147483000; background: #000 !important; color: #fff; outline: none;
       overflow: hidden; user-select: none; -webkit-user-select: none; animation: am-zen-in ${ZEN_FADE_MS}ms ease-out;
-      -webkit-font-smoothing: antialiased; --zx: max(16px, 8vw); --zb: 120px; }
+      -webkit-font-smoothing: antialiased; --zx: max(16px, 8vw); --zb: 120px;
+      /* fonts (settings: Title font / Text font). Big lines: family, weight, stretch, squeeze (scaleX), stroke */
+      --zbf: var(--am-zserif, "Times New Roman", Times, serif); --zbw: var(--am-zwght, 800); --zbs: 62.5%;
+      --zbx: var(--am-zsx, .66); --zbk: var(--am-zstroke, 0em);
+      --zsf: var(--am-zsans, "Roboto Condensed", "Arial Narrow", Arial, sans-serif); --zsw: 700; --zss: 72%; }
+    .am-zen.am-zbf-sans { --zbf: var(--am-zsans, "Roboto Condensed", "Arial Narrow", Arial, sans-serif); --zbw: 700;
+      --zbs: 62.5%; --zbx: 1; --zbk: 0em; }
+    .am-zen.am-zbf-own { --zbf: var(--am-font, system-ui, sans-serif); --zbw: 800; --zbs: normal; --zbx: 1; --zbk: 0em; }
+    .am-zen.am-zsf-serif { --zsf: var(--am-zserif, "Times New Roman", Times, serif); --zsw: var(--am-zwght, 800); --zss: 62.5%; }
+    .am-zen.am-zsf-own { --zsf: var(--am-font, system-ui, sans-serif); --zsw: 700; --zss: normal; }
+    .am-zno-head .am-zhead, .am-zno-album .am-zalbum, .am-zno-artist .am-zsub, .am-zno-clock .am-zclock { display: none !important; }
     .am-zen.am-zen-now { animation: none; }
     .am-zen.am-zen-out { opacity: 0; transition: opacity .35s ease; pointer-events: none; }
     @keyframes am-zen-in { from { opacity: 0; } }
@@ -3200,9 +3561,9 @@
     .am-zc { position: absolute; left: var(--zx); right: var(--zx); top: 46%; translate: 0 -50%; }
     .am-zl { white-space: nowrap; }
     .am-zl > span { display: inline-block; transform-origin: 0 50%; }
-    .am-zserif > span { font-family: var(--am-zserif, "Times New Roman", Times, serif); font-weight: var(--am-zwght, 800);
-      font-stretch: 62.5%; letter-spacing: -.012em; transform: scaleX(var(--am-zsx, .66));
-      -webkit-text-stroke: var(--am-zstroke, 0) #fff; paint-order: stroke fill; }
+    .am-zserif > span { font-family: var(--zbf); font-weight: var(--zbw);
+      font-stretch: var(--zbs); letter-spacing: -.012em; transform: scaleX(var(--zbx));
+      -webkit-text-stroke: var(--zbk) #fff; paint-order: stroke fill; }
     .am-zhead { font-size: calc(var(--zb) * .46); line-height: .9; }
     .am-zbig { line-height: .92; margin-top: .03em; }
     .am-zsans { font-size: calc(var(--zb) * .3); line-height: 1; margin-top: calc(var(--zb) * .2);
@@ -3217,6 +3578,19 @@
     /* the artist (or a line of text) under the clock: same grotesque, a little smaller, wraps */
     .am-zsub { font-size: calc(var(--zb) * .27); line-height: 1.08; margin-top: calc(var(--zb) * .07);
       white-space: normal; overflow-wrap: anywhere; text-wrap: balance; max-width: 100%; }
+
+    /* the lyric line: a box two lines high above the controls (placed by fitZen), the text sits on its bottom */
+    .am-zlyric { position: absolute; left: var(--zx); right: var(--zx); display: flex; flex-direction: column;
+      justify-content: flex-end; font-size: max(16px, calc(var(--zb) * .2)); line-height: 1.1; height: 2.2em; }
+    .am-zlyric.am-zly2 { height: 3.3em; }
+    .am-zlyric > span { flex-shrink: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+      line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; text-wrap: balance; }
+    .am-zly-cur { opacity: .85; min-height: 1.1em; }
+    .am-zlyric > .am-zly-next { -webkit-line-clamp: 1; line-clamp: 1; opacity: .35; }
+    /* "Under title": in the card, after the clock, its rows kept at a fixed height so the card doesn't jump */
+    .am-zlyric.am-zlyric-in { position: relative; inset: auto; justify-content: flex-start; margin-top: calc(var(--zb) * .16); }
+    .am-zlyric > .am-zly-ghost { position: absolute; margin: 0; pointer-events: none; }
+    .am-zen-black .am-zlyric { visibility: hidden; }
 
     .am-zlock { display: flex; align-items: baseline; gap: .18em; }
     .am-zinp { all: unset; width: 2.3ch; text-align: center; font-size: 1em; color: #fff; cursor: text;
@@ -3237,8 +3611,8 @@
     .am-zstep { padding: 0 .2em; }
     .am-znolimit { margin-left: .4em; }
     /* after the all: unset resets above */
-    .am-zsans, .am-zsub, .am-zalbum, .am-zclock, .am-zbtn, .am-zinp { font-family: var(--am-zsans, "Roboto Condensed", "Arial Narrow", Arial, sans-serif);
-      font-weight: 700; font-stretch: 72%; letter-spacing: -.01em; }
+    .am-zsans, .am-zsub, .am-zalbum, .am-zclock, .am-zlyric, .am-zbtn, .am-zinp { font-family: var(--zsf);
+      font-weight: var(--zsw); font-stretch: var(--zss); letter-spacing: -.01em; }
 
     /* widescreen layout */
     .am-zen.am-zwide { --zx: max(16px, 6vw); }
@@ -3247,8 +3621,8 @@
     .am-zwide .am-zalbum { font-size: calc(var(--zb) * .2); margin-top: calc(var(--zb) * .1); }
     .am-zwide .am-zpre { margin-top: calc(var(--zb) * .16); }
     .am-zwide > .am-zsub { position: absolute; right: var(--zx); bottom: 22vh; max-width: 46vw; margin: 0; text-align: right;
-      font-family: var(--am-zserif, "Times New Roman", Times, serif); font-weight: var(--am-zwght, 800); font-stretch: 62.5%;
-      -webkit-text-stroke: var(--am-zstroke, 0) #fff; paint-order: stroke fill;
+      font-family: var(--zbf); font-weight: var(--zbw); font-stretch: var(--zbs);
+      -webkit-text-stroke: var(--zbk) #fff; paint-order: stroke fill;
       font-size: calc(var(--zb) * .38); line-height: .98; letter-spacing: -.01em; }
     .am-zen-black > .am-zsub { visibility: hidden; }
 
@@ -3259,7 +3633,7 @@
   const zenOff = () => {
     clearTimeout(zenTick);
     if (zenEl) zenEl.remove();
-    if (zenMode === 'on') restoreQuality();
+    if (zenMode === 'on') { restoreQuality(); restoreLyricsTab(); }
     zenEl = null; zenMode = null;
     html.classList.remove('am-zen-on');
     uninertPage();
@@ -3280,9 +3654,12 @@
   let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
   const timer = setInterval(() => {
     if (zenEl) return;                                    // zen covers everything: nothing here is visible, save the work
-    if (performance.now() > animatingUntil) hideBase();   // skip layout-heavy work mid-animation
-    if (tick++ % 4 === 0) syncGuideEntry();               // sidebar entry: once a second is plenty
-    if (tick % 4 === 2 && performance.now() > animatingUntil) sweepBg();   // custom background: clear new page backgrounds
+    // the settings panel covers the page: the page checks below (they measure the page, which is slow) wait, so the
+    // panel stays smooth. The bar keeps updating, it is the live preview for the bar settings.
+    const busy = !!setEl;
+    if (!busy && performance.now() > animatingUntil) hideBase();   // skip layout-heavy work mid-animation
+    if (tick++ % 4 === 0 && !busy) syncGuideEntry();      // sidebar entry: once a second is plenty
+    if (tick % 4 === 2 && !busy && performance.now() > animatingUntil) sweepBg();   // custom background: clear new page backgrounds
     const pk = pageKey();                                 // another kind of page: its own dim / blur / header
     if (pk !== curPage) {
       html.classList.remove('am-page-' + curPage);
@@ -3291,8 +3668,8 @@
       applyBgVars();
       clearShade();
     }
-    if (tick % 4 === 1 && curPage === 'artist') syncArtist();
-    if (tick % 4 === 3) roomForPlaying();                 // room for the playing row's overlay
+    if (tick % 4 === 1 && !busy && curPage === 'artist') syncArtist();
+    if (tick % 4 === 3 && !busy) roomForPlaying();        // room for the playing row's overlay
     updateRefractMap();                                   // no-op unless refraction is on and the bar changed size
     watchPage();
     onPageState();
@@ -3374,7 +3751,7 @@
     for (const n of [...roomed.keys()]) unroom(n);
     styleEl.remove();
     setStyle.remove();
-    for (const s of SETTINGS) if (s.css) document.documentElement.style.removeProperty(s.css(0)[0]);
+    setVars.remove();
     document.documentElement.classList.remove('am-refract', 'am-easy-track');
     refractDefs.remove();
     document.documentElement.classList.remove('am-player-open', 'am-animating', 'am-fs', 'am-mini-hidden');

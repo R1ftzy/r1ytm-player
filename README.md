@@ -35,6 +35,9 @@ Runs only on `https://music.youtube.com/*`. Needs no permissions. Works in Chrom
 - You can set your own background: a color, an image or GIF, or a gradient you make yourself!
 - The gradient maker lets you paint with soft glowing brushes and add effects like grain, bloom and glass.
 - Zen mode locks the music for a time you pick (or no limit): a black title-card screen with only play / pause, next, a sleep timer and a close button that unlocks when the time is up.
+- With [Better Lyrics](https://github.com/better-lyrics/better-lyrics) installed, zen mode can show the line being sung (or two lines), at the bottom or under the title, with a hard cut or a smooth slide.
+- You can set up zen mode in the settings: the layout, the fonts, which parts show, and what each line ends with.
+- The settings come in two layouts: Modern (categories on the side) or Legacy (one long list).
 
 It is best used together with [Better Lyrics](https://github.com/better-lyrics/better-lyrics) for YouTube Music.
 

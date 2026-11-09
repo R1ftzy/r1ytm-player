@@ -5,6 +5,8 @@
   // straight back into zen until it's over. "No limit" runs until closed, with close available from the start.
   // Power: while zen is up the page behind it isn't rendered at all (content-visibility), r1ytm's main loop pauses, the
   // zen clock ticks once a second, and a playing music video drops to its lowest picture quality (audio is untouched).
+  // The Zen group in the settings picks the layout, the two fonts, which parts show, and up to two lines of lyrics
+  // (read from the Better Lyrics extension when it is installed). They apply the next time zen opens.
   const P_ZEN = 'M12 2c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm9 14v-2c-2.24 0-4.16-.96-5.6-2.68l-1.34-1.6A1.98 1.98 0 0 0 12.53 9h-1.05c-.59 0-1.15.26-1.53.71l-1.34 1.6C7.16 13.04 5.24 14 3 14v2c2.77 0 5.19-1.17 7-3.25V15l-3.88 1.55c-.67.27-1.12.93-1.12 1.66C5 19.2 5.8 20 6.79 20H9v-.5a2.5 2.5 0 0 1 2.5-2.5h3c.28 0 .5.22.5.5s-.22.5-.5.5h-3c-.83 0-1.5.67-1.5 1.5v.5h7.21c.99 0 1.79-.8 1.79-1.79 0-.73-.45-1.39-1.12-1.66L14 15v-2.25c1.81 2.08 4.23 3.25 7 3.25z';
   const ZEN_KEY = 'am-zen';                      // { until, start } (epoch ms) while a zen session runs; until 0 = no limit
   const ZEN_MIN_KEY = 'am-zen-mins';             // last picked length in minutes; 0 = no limit
@@ -82,8 +84,12 @@
   const greeting = () => {
     const h = new Date().getHours();
     const part = h >= 5 && h < 12 ? 'MORNING' : h >= 12 && h < 17 ? 'AFTERNOON' : h >= 17 && h < 22 ? 'EVENING' : 'NIGHT';
-    return zenName ? [`GOOD ${part},`, zenName.toUpperCase()] : ['GOOD', part];
+    const g = zenName ? [`GOOD ${part},`, zenName.toUpperCase()] : ['GOOD', part];
+    g[g.length - 1] = endWith(g[g.length - 1], settings.zenHeadEnd);
+    return g;
   };
+  // the punctuation picked for a line in the settings (1 full stop, 2 comma), unless it already ends in some
+  const endWith = (s, k) => !s || !k || /[.,!?…;:]$/.test(s) ? s : s + (k === 1 ? '.' : ',');
   const setHead = head => {
     const g = greeting(), key = g.join('\n');
     if (head.dataset.text === key) return false;
@@ -154,14 +160,17 @@
     if (!c || !big) return;
     // widescreen: title block top left over about two thirds of the width, the artist bottom right, empty space between
     // (like a 16:9 title card). Narrower screens (4:3, portrait): everything stacked and centered.
-    const wide = innerWidth / innerHeight >= 1.45;
+    const lay = settings.zenLayout;                    // 0 auto, 1 always wide, 2 always stacked
+    const wide = lay === 1 || (lay !== 2 && innerWidth / innerHeight >= 1.45);
     zenEl.classList.toggle('am-zwide', wide);
     const sub = zenEl.querySelector('.am-zsub');
     if (sub && sub.parentNode !== (wide ? zenEl : c)) {
       if (wide) zenEl.append(sub);
       else c.insertBefore(sub, c.querySelector('.am-zclock'));      // back above the clock (null on the setup screen: last)
     }
-    const sx = parseFloat(getComputedStyle(html).getPropertyValue('--am-zsx')) || .66;
+    const subOn = !!sub && sub.getClientRects().length > 0;       // the artist can be hidden in the settings
+    const lbox = zenUi.lyric && zenUi.lyric.parentNode === zenEl ? zenUi.lyric : null;   // under the title it's in the card
+    const sx = parseFloat(getComputedStyle(zenEl).getPropertyValue('--zbx')) || .66;     // 1 when the title font isn't the serif
     const W = c.clientWidth, H = innerHeight;
     const widest = spans => Math.max(1, ...spans.map(s => s.offsetWidth * sx));
     let B = wide ? Math.min(W * .19, H * .21) : Math.min(W * .17, H * .19);
@@ -186,12 +195,23 @@
       big.replaceChildren();
       best.lines.forEach(t => zline(big, 'am-zserif', t));
       big.style.fontSize = best.size + 'px';
-      const ctlTop = zenUi.ctl ? zenUi.ctl.getBoundingClientRect().top : H;
+      let ctlTop = zenUi.ctl ? zenUi.ctl.getBoundingClientRect().top : H;
+      if (lbox) {
+        // the lyric box (a fixed height, empty or not) sits just above the controls; the card stays above it, so a
+        // new line never changes the size of the title. Widescreen: it stops short of the artist on the right.
+        lbox.style.bottom = (H - ctlTop + Math.max(16, B * .22)) + 'px';
+        lbox.style.right = '';
+        if (wide && subOn) {
+          const sr = sub.getBoundingClientRect();
+          lbox.style.right = Math.max(0, innerWidth - sr.left + B * .3) + 'px';
+        }
+        ctlTop = lbox.getBoundingClientRect().top;
+      }
       const h = c.offsetHeight;
       let room;
       if (wide) {
         // the block hangs from the top; it must stay above the controls, and above the artist where the two overlap
-        const cr = c.getBoundingClientRect(), sr = sub ? sub.getBoundingClientRect() : null;
+        const cr = c.getBoundingClientRect(), sr = subOn ? sub.getBoundingClientRect() : null;
         let bottom = ctlTop - 24;
         if (sr && sr.left < cr.right) bottom = Math.min(bottom, sr.top - B * .15);
         room = bottom - cr.top;
@@ -207,6 +227,8 @@
   /* the overlay */
   const zenShell = () => {
     const z = el('div', 'am-zen am-zen-black', document.body);
+    z.classList.add('am-zbf-' + (['serif', 'sans', 'own'][settings.zenBigFont] || 'serif'),
+                    'am-zsf-' + (['sans', 'serif', 'own'][settings.zenSmallFont] || 'sans'));
     z.tabIndex = -1;
     z.setAttribute('role', 'dialog');
     z.setAttribute('aria-modal', 'true');
@@ -295,6 +317,11 @@
     const z = zenEl = zenShell();
     if (old) { z.classList.add('am-zen-now'); old.remove(); }        // from setup: straight to black, no fade
     inertPage();
+    // parts turned off in the settings (hidden with CSS, so the fitting just sees nothing there)
+    if (!settings.zenGreeting) z.classList.add('am-zno-head');
+    if (!settings.zenAlbum) z.classList.add('am-zno-album');
+    if (!settings.zenArtist) z.classList.add('am-zno-artist');
+    if (!settings.zenClock) z.classList.add('am-zno-clock');
     const c = el('div', 'am-zc', z);
     zenUi.head = el('div', 'am-zhead', c);
     setHead(zenUi.head);
@@ -302,6 +329,14 @@
     zenUi.album = el('div', 'am-zalbum', c);
     zenUi.sub = el('div', 'am-zsub', c);          // stacked layout: artist under the album (widescreen: bottom right)
     zenUi.clock = el('div', 'am-zclock', c);
+    // lyrics: the line being sung (wraps to 2 rows at most) and, with "2 lines", the next one dimmed under it (1 row)
+    if (settings.zenLyrics) {
+      const under = settings.zenLyricsPos === 1;
+      const box = zenUi.lyric = el('div', 'am-zlyric' + (under ? ' am-zlyric-in' : '') + (settings.zenLyrics === 2 ? ' am-zly2' : ''), under ? c : z);
+      zenUi.lyCur = el('span', 'am-zly-cur', box);
+      if (settings.zenLyrics === 2) zenUi.lyNext = el('span', 'am-zly-next', box);
+    }
+    lyr.vid = ''; lyr.sig = ''; lyr.staleSig = null;
 
     const ctl = zenUi.ctl = el('div', 'am-zctl', z);
     zenUi.play = zbtn(ctl, 'PAUSE', clickYt('PlayPause'));
@@ -335,6 +370,7 @@
       store.set(ZEN_KEY, 'null');
       restoreMediaKeys();
       restoreQuality();
+      restoreLyricsTab();
     }
     z.classList.add('am-zen-out');
     setTimeout(() => z.remove(), 400);
@@ -468,6 +504,100 @@
     } catch {}
   };
 
+  /* one line of lyrics, from Better Lyrics (setting "Lyrics line"). Better Lyrics only loads lyrics while YTM's Lyrics
+     tab is selected, so zen selects it (and puts the tab that was open back on close). It also stops animating its
+     own view while that view is hidden, which it is behind zen, so its "active" class can't be trusted here: the
+     line is picked from the start / length (seconds) it writes on every line (data-time / data-duration) against
+     the video's own time. Its container doesn't say which song the lyrics belong to, so after a song change the
+     old lines are ignored until they are replaced. */
+  const LYRIC_LEAD = .15;                        // show a line this much early (s): reads as on time
+  const lyr = { vid: '', sig: '', staleSig: null };
+  const lyricTexts = new WeakMap();
+  let lyricTabPrev = -1, lyricTabTry = 0;
+  const lyricTabs = () => document.getElementsByClassName('tab-header style-scope ytmusic-player-page');   // Up next, Lyrics, Related
+  const selectLyricsTab = () => {
+    const tabs = lyricTabs(), lt = tabs[1];
+    if (!lt || lt.getAttribute('aria-selected') === 'true' || performance.now() < lyricTabTry) return;
+    lyricTabTry = performance.now() + 3000;
+    if (lyricTabPrev < 0) lyricTabPrev = [...tabs].findIndex(t => t.getAttribute('aria-selected') === 'true');
+    lt.click();
+  };
+  const restoreLyricsTab = () => {
+    const t = lyricTabPrev >= 0 && lyricTabs()[lyricTabPrev];
+    lyricTabPrev = -1; lyricTabTry = 0;
+    if (t && t.getAttribute('aria-selected') !== 'true') t.click();
+  };
+  // the sung text of a line: its main row without the karaoke highlight copy, translation, romanization or
+  // background vocals
+  const lyricText = line => {
+    let t = lyricTexts.get(line);
+    if (t === undefined) {
+      const c = (line.querySelector(':scope > .blyrics-line-main') || line).cloneNode(true);
+      c.querySelectorAll('.blyrics-highlight-run, .blyrics--translated, .blyrics--romanized, .blyrics-background-line, .blyrics-background-lyric')
+        .forEach(n => n.remove());
+      t = c.textContent.replace(/\s+/g, ' ').trim();
+      if (line.dataset.instrumental === 'true') t = '';
+      lyricTexts.set(line, t);
+    }
+    return t;
+  };
+  // -> { text, nextText, next } (next: when the next line starts, s) or null
+  const currentLyric = v => {
+    const box = document.querySelector('#blyrics-wrapper .blyrics-container');
+    const ok = box && box.dataset.noLyrics !== 'true' && box.dataset.sync !== 'none';
+    const lines = ok ? [...box.querySelectorAll('.blyrics--line[data-time]')] : [];
+    const last = lines[lines.length - 1];
+    const sig = last ? lines.length + '|' + lines[0].dataset.time + '|' + lyricText(lines[0]) + '|' + last.dataset.time : '';
+    // new song: the lines on screen now (if any) belong to the last one until they change
+    const id = curVideoId();
+    if (id !== lyr.vid) { lyr.staleSig = lyr.vid && lyr.sig ? lyr.sig : null; lyr.vid = id; }
+    lyr.sig = sig;
+    if (!sig) return null;
+    if (lyr.staleSig !== null) { if (sig === lyr.staleSig) return null; lyr.staleSig = null; }
+    if (v.duration && +last.dataset.time > v.duration + 1) return null;      // can't be this song's
+    const t = v.currentTime + LYRIC_LEAD;
+    let i = -1;
+    for (let k = 0; k < lines.length && +lines[k].dataset.time <= t; k++) i = k;
+    const nl = lines[i + 1], next = nl ? +nl.dataset.time : 0, nextText = nl ? lyricText(nl) : '';
+    if (i < 0) return { text: '', nextText, next };
+    const ln = lines[i], end = +ln.dataset.time + (+ln.dataset.duration || 0);
+    // a long gap after a line (no instrumental line in between): the line goes when it's over
+    return { text: +ln.dataset.duration > 0 && t > end + 1.5 ? '' : lyricText(ln), nextText, next };
+  };
+
+  /* "Smooth lyrics": the old line drifts up and fades out (a copy of it, so the new text can go in right away), the
+     new one comes up into place. With 2 lines the next line is already on screen, so it slides up from where it was
+     and brightens; the line after it fades in below. Only opacity and translate move (cheap for the browser). */
+  const LYRIC_MOVE_MS = 420, LYRIC_EASE = 'cubic-bezier(.2, .8, .2, 1)';
+  const lyricMove = (curTxt, nextTxt) => {
+    const box = zenUi.lyric, c = zenUi.lyCur, n = zenUi.lyNext;
+    const curChanged = c.textContent !== curTxt;
+    const fromNext = curChanged && !!n && !!curTxt && n.textContent === curTxt;
+    const nextTop = n ? n.offsetTop : 0;
+    if (curChanged && c.textContent) {
+      const ghost = c.cloneNode(true);
+      ghost.classList.add('am-zly-ghost');
+      Object.assign(ghost.style, { left: c.offsetLeft + 'px', top: c.offsetTop + 'px', width: c.offsetWidth + 'px' });
+      box.append(ghost);
+      const a = ghost.animate([{ opacity: .85, translate: '0 0' }, { opacity: 0, translate: '0 -.6em' }],
+        { duration: LYRIC_MOVE_MS, easing: LYRIC_EASE });
+      a.onfinish = a.oncancel = () => ghost.remove();
+    }
+    const nextChanged = !!n && n.textContent !== nextTxt;
+    c.textContent = curTxt;
+    if (n) n.textContent = nextTxt;
+    if (curChanged && curTxt) {
+      c.animate(fromNext
+        ? [{ opacity: .35, translate: `0 ${nextTop - c.offsetTop}px` }, { opacity: .85, translate: '0 0' }]
+        : [{ opacity: 0, translate: '0 .5em' }, { opacity: .85, translate: '0 0' }],
+        { duration: LYRIC_MOVE_MS, easing: LYRIC_EASE });
+    }
+    if (nextChanged && nextTxt) {
+      n.animate([{ opacity: 0, translate: '0 .5em' }, { opacity: .35, translate: '0 0' }],
+        { duration: LYRIC_MOVE_MS, easing: LYRIC_EASE, delay: 90, fill: 'backwards' });
+    }
+  };
+
   // the zen loop: once a second, just after each whole second so the clock never skips or doubles; every 250ms near
   // the end of a song while "sleep at the end of this song" is set (it pauses in the last 0.6s)
   const zenSchedule = () => {
@@ -475,7 +605,13 @@
     if (zenMode !== 'on') return;
     const v = video();
     const nearEnd = SLEEP_STEPS[sleepIdx] === 'end' && v && v.duration && v.duration - v.currentTime < 2;
-    zenTick = setTimeout(() => { zenUpdate(); zenSchedule(); }, nearEnd ? 250 : 1000 - Date.now() % 1000 + 5);
+    let wait = nearEnd ? 250 : 1000 - Date.now() % 1000 + 5;
+    // a lyric line: wake right when the next one starts (not more often than that)
+    if (zenUi.lyricNext && v && !v.paused && !document.hidden) {
+      const ms = (zenUi.lyricNext - LYRIC_LEAD - v.currentTime) / (v.playbackRate || 1) * 1000 + 15;
+      if (ms > 0) wait = Math.min(wait, Math.max(40, ms));
+    }
+    zenTick = setTimeout(() => { zenUpdate(); zenSchedule(); }, wait);
   };
 
   const zenUpdate = () => {
@@ -496,12 +632,12 @@
       if (t + '\n' + a + '\n' + al !== zenShown || headChanged) {
         zenShown = t + '\n' + a + '\n' + al;
         // the album under the title (left out when there's none, or it's just the title again)
-        zenUi.album.textContent = al && al.trim().toLowerCase() !== t.trim().toLowerCase() ? al : '';
+        zenUi.album.textContent = al && al.trim().toLowerCase() !== t.trim().toLowerCase() ? endWith(al.trim(), settings.zenAlbumEnd) : '';
         const clean = t.replace(/\s*[([][^)\]]*[)\]]/g, '').trim() || t;    // "(feat. …)", "[Official Video]" off the big line
-        zenUi.big.dataset.text = (clean || 'SILENCE').toUpperCase();
-        // a full stop after the artist, like a title card line (not when it already ends in punctuation)
+        zenUi.big.dataset.text = clean ? endWith(clean.toUpperCase(), settings.zenTitleEnd) : 'SILENCE';
+        // the artist ends with a full stop by default, like a title card line
         const who = a || 'Unknown artist';
-        zenUi.sub.textContent = !t ? 'Nothing is playing.' : /[.!?…]$/.test(who) ? who : who + '.';
+        zenUi.sub.textContent = !t ? 'Nothing is playing.' : endWith(who, settings.zenDot);
         fitZen();
       }
 
@@ -511,6 +647,22 @@
       zenUi.close.textContent = locked ? 'CLOSE · LOCKED' : 'CLOSE';
       zenUi.close.title = locked ? `Unlocks in ${fmtTime(left)}` : 'Leave zen mode';
       zenUi.close.classList.toggle('am-on', !locked);
+
+      // lyric line: a hard cut to the new line like the rest of the card, or (setting "Smooth lyrics") a slide
+      if (zenUi.lyric) {
+        const on = hasBetterLyrics();
+        if (on) selectLyricsTab();
+        const cur = on && v ? currentLyric(v) : null;
+        const curTxt = cur ? cur.text : '', nextTxt = cur ? cur.nextText : '';
+        if (zenUi.lyCur.textContent !== curTxt || (zenUi.lyNext && zenUi.lyNext.textContent !== nextTxt)) {
+          if (settings.zenLyricsSmooth && !reduceMotion.matches) lyricMove(curTxt, nextTxt);
+          else {
+            zenUi.lyCur.textContent = curTxt;
+            if (zenUi.lyNext) zenUi.lyNext.textContent = nextTxt;
+          }
+        }
+        zenUi.lyricNext = cur ? cur.next : 0;
+      }
 
       // play / pause
       zenUi.play.textContent = !v || v.paused ? 'PLAY' : 'PAUSE';
@@ -528,7 +680,7 @@
       if (v && !v.paused) v.pause();
       sleepIdx = 0; sleepAt = 0;
     }
-    if (!shownNow) return;
+    if (!shownNow) { zenUi.lyricNext = 0; return; }
     const st2 = SLEEP_STEPS[sleepIdx];
     zenUi.sleep.textContent = !st2 ? 'SLEEP: OFF' : st2 === 'end' ? 'SLEEP: END OF SONG' : `SLEEP:${fmtTime(sleepAt - now)}`;
     zenUi.sleep.classList.toggle('am-on', !!st2);
@@ -565,7 +717,17 @@
   zenStyle.textContent = `
     .am-zen { position: fixed; inset: 0; z-index: 2147483000; background: #000 !important; color: #fff; outline: none;
       overflow: hidden; user-select: none; -webkit-user-select: none; animation: am-zen-in ${ZEN_FADE_MS}ms ease-out;
-      -webkit-font-smoothing: antialiased; --zx: max(16px, 8vw); --zb: 120px; }
+      -webkit-font-smoothing: antialiased; --zx: max(16px, 8vw); --zb: 120px;
+      /* fonts (settings: Title font / Text font). Big lines: family, weight, stretch, squeeze (scaleX), stroke */
+      --zbf: var(--am-zserif, "Times New Roman", Times, serif); --zbw: var(--am-zwght, 800); --zbs: 62.5%;
+      --zbx: var(--am-zsx, .66); --zbk: var(--am-zstroke, 0em);
+      --zsf: var(--am-zsans, "Roboto Condensed", "Arial Narrow", Arial, sans-serif); --zsw: 700; --zss: 72%; }
+    .am-zen.am-zbf-sans { --zbf: var(--am-zsans, "Roboto Condensed", "Arial Narrow", Arial, sans-serif); --zbw: 700;
+      --zbs: 62.5%; --zbx: 1; --zbk: 0em; }
+    .am-zen.am-zbf-own { --zbf: var(--am-font, system-ui, sans-serif); --zbw: 800; --zbs: normal; --zbx: 1; --zbk: 0em; }
+    .am-zen.am-zsf-serif { --zsf: var(--am-zserif, "Times New Roman", Times, serif); --zsw: var(--am-zwght, 800); --zss: 62.5%; }
+    .am-zen.am-zsf-own { --zsf: var(--am-font, system-ui, sans-serif); --zsw: 700; --zss: normal; }
+    .am-zno-head .am-zhead, .am-zno-album .am-zalbum, .am-zno-artist .am-zsub, .am-zno-clock .am-zclock { display: none !important; }
     .am-zen.am-zen-now { animation: none; }
     .am-zen.am-zen-out { opacity: 0; transition: opacity .35s ease; pointer-events: none; }
     @keyframes am-zen-in { from { opacity: 0; } }
@@ -577,9 +739,9 @@
     .am-zc { position: absolute; left: var(--zx); right: var(--zx); top: 46%; translate: 0 -50%; }
     .am-zl { white-space: nowrap; }
     .am-zl > span { display: inline-block; transform-origin: 0 50%; }
-    .am-zserif > span { font-family: var(--am-zserif, "Times New Roman", Times, serif); font-weight: var(--am-zwght, 800);
-      font-stretch: 62.5%; letter-spacing: -.012em; transform: scaleX(var(--am-zsx, .66));
-      -webkit-text-stroke: var(--am-zstroke, 0) #fff; paint-order: stroke fill; }
+    .am-zserif > span { font-family: var(--zbf); font-weight: var(--zbw);
+      font-stretch: var(--zbs); letter-spacing: -.012em; transform: scaleX(var(--zbx));
+      -webkit-text-stroke: var(--zbk) #fff; paint-order: stroke fill; }
     .am-zhead { font-size: calc(var(--zb) * .46); line-height: .9; }
     .am-zbig { line-height: .92; margin-top: .03em; }
     .am-zsans { font-size: calc(var(--zb) * .3); line-height: 1; margin-top: calc(var(--zb) * .2);
@@ -594,6 +756,19 @@
     /* the artist (or a line of text) under the clock: same grotesque, a little smaller, wraps */
     .am-zsub { font-size: calc(var(--zb) * .27); line-height: 1.08; margin-top: calc(var(--zb) * .07);
       white-space: normal; overflow-wrap: anywhere; text-wrap: balance; max-width: 100%; }
+
+    /* the lyric line: a box two lines high above the controls (placed by fitZen), the text sits on its bottom */
+    .am-zlyric { position: absolute; left: var(--zx); right: var(--zx); display: flex; flex-direction: column;
+      justify-content: flex-end; font-size: max(16px, calc(var(--zb) * .2)); line-height: 1.1; height: 2.2em; }
+    .am-zlyric.am-zly2 { height: 3.3em; }
+    .am-zlyric > span { flex-shrink: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+      line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; text-wrap: balance; }
+    .am-zly-cur { opacity: .85; min-height: 1.1em; }
+    .am-zlyric > .am-zly-next { -webkit-line-clamp: 1; line-clamp: 1; opacity: .35; }
+    /* "Under title": in the card, after the clock, its rows kept at a fixed height so the card doesn't jump */
+    .am-zlyric.am-zlyric-in { position: relative; inset: auto; justify-content: flex-start; margin-top: calc(var(--zb) * .16); }
+    .am-zlyric > .am-zly-ghost { position: absolute; margin: 0; pointer-events: none; }
+    .am-zen-black .am-zlyric { visibility: hidden; }
 
     .am-zlock { display: flex; align-items: baseline; gap: .18em; }
     .am-zinp { all: unset; width: 2.3ch; text-align: center; font-size: 1em; color: #fff; cursor: text;
@@ -614,8 +789,8 @@
     .am-zstep { padding: 0 .2em; }
     .am-znolimit { margin-left: .4em; }
     /* after the all: unset resets above */
-    .am-zsans, .am-zsub, .am-zalbum, .am-zclock, .am-zbtn, .am-zinp { font-family: var(--am-zsans, "Roboto Condensed", "Arial Narrow", Arial, sans-serif);
-      font-weight: 700; font-stretch: 72%; letter-spacing: -.01em; }
+    .am-zsans, .am-zsub, .am-zalbum, .am-zclock, .am-zlyric, .am-zbtn, .am-zinp { font-family: var(--zsf);
+      font-weight: var(--zsw); font-stretch: var(--zss); letter-spacing: -.01em; }
 
     /* widescreen layout */
     .am-zen.am-zwide { --zx: max(16px, 6vw); }
@@ -624,8 +799,8 @@
     .am-zwide .am-zalbum { font-size: calc(var(--zb) * .2); margin-top: calc(var(--zb) * .1); }
     .am-zwide .am-zpre { margin-top: calc(var(--zb) * .16); }
     .am-zwide > .am-zsub { position: absolute; right: var(--zx); bottom: 22vh; max-width: 46vw; margin: 0; text-align: right;
-      font-family: var(--am-zserif, "Times New Roman", Times, serif); font-weight: var(--am-zwght, 800); font-stretch: 62.5%;
-      -webkit-text-stroke: var(--am-zstroke, 0) #fff; paint-order: stroke fill;
+      font-family: var(--zbf); font-weight: var(--zbw); font-stretch: var(--zbs);
+      -webkit-text-stroke: var(--zbk) #fff; paint-order: stroke fill;
       font-size: calc(var(--zb) * .38); line-height: .98; letter-spacing: -.01em; }
     .am-zen-black > .am-zsub { visibility: hidden; }
 
@@ -636,7 +811,7 @@
   const zenOff = () => {
     clearTimeout(zenTick);
     if (zenEl) zenEl.remove();
-    if (zenMode === 'on') restoreQuality();
+    if (zenMode === 'on') { restoreQuality(); restoreLyricsTab(); }
     zenEl = null; zenMode = null;
     html.classList.remove('am-zen-on');
     uninertPage();

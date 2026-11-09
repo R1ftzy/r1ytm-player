@@ -2,9 +2,12 @@
   let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
   const timer = setInterval(() => {
     if (zenEl) return;                                    // zen covers everything: nothing here is visible, save the work
-    if (performance.now() > animatingUntil) hideBase();   // skip layout-heavy work mid-animation
-    if (tick++ % 4 === 0) syncGuideEntry();               // sidebar entry: once a second is plenty
-    if (tick % 4 === 2 && performance.now() > animatingUntil) sweepBg();   // custom background: clear new page backgrounds
+    // the settings panel covers the page: the page checks below (they measure the page, which is slow) wait, so the
+    // panel stays smooth. The bar keeps updating, it is the live preview for the bar settings.
+    const busy = !!setEl;
+    if (!busy && performance.now() > animatingUntil) hideBase();   // skip layout-heavy work mid-animation
+    if (tick++ % 4 === 0 && !busy) syncGuideEntry();      // sidebar entry: once a second is plenty
+    if (tick % 4 === 2 && !busy && performance.now() > animatingUntil) sweepBg();   // custom background: clear new page backgrounds
     const pk = pageKey();                                 // another kind of page: its own dim / blur / header
     if (pk !== curPage) {
       html.classList.remove('am-page-' + curPage);
@@ -13,8 +16,8 @@
       applyBgVars();
       clearShade();
     }
-    if (tick % 4 === 1 && curPage === 'artist') syncArtist();
-    if (tick % 4 === 3) roomForPlaying();                 // room for the playing row's overlay
+    if (tick % 4 === 1 && !busy && curPage === 'artist') syncArtist();
+    if (tick % 4 === 3 && !busy) roomForPlaying();        // room for the playing row's overlay
     updateRefractMap();                                   // no-op unless refraction is on and the bar changed size
     watchPage();
     onPageState();
@@ -96,7 +99,7 @@
     for (const n of [...roomed.keys()]) unroom(n);
     styleEl.remove();
     setStyle.remove();
-    for (const s of SETTINGS) if (s.css) document.documentElement.style.removeProperty(s.css(0)[0]);
+    setVars.remove();
     document.documentElement.classList.remove('am-refract', 'am-easy-track');
     refractDefs.remove();
     document.documentElement.classList.remove('am-player-open', 'am-animating', 'am-fs', 'am-mini-hidden');
