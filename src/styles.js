@@ -153,7 +153,7 @@
 
     .am-lcd { position: relative; min-width: 0; height: calc(52px * var(--am-s, 1)); display: flex; align-items: center; gap: 10px;
       padding: 0 12px 0 4px; border-radius: 11px; background: transparent; border: none; }
-    .am-art { width: calc(44px * var(--am-s, 1)); height: calc(44px * var(--am-s, 1)); border-radius: 8px; object-fit: cover; flex-shrink: 0; }
+    .am-art { width: calc(44px * var(--am-s, 1)); height: calc(44px * var(--am-s, 1)); border-radius: var(--am-art-r, 8px); object-fit: cover; flex-shrink: 0; }
     .am-art:not([src]), .am-art[src=""] { visibility: hidden; }
     .am-info { min-width: 0; flex: 1; padding-bottom: 8px; }
     .am-title, .am-artist { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

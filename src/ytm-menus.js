@@ -71,7 +71,9 @@
       const h = Math.min(r.height, Math.max(160, down ? below : above));
       m.style.top = (down ? a.bottom + 6 : a.top - 6 - h) + 'px';
       const left = t.type === 'click' ? a.right - r.width : a.left;
-      m.style.left = Math.max(8, Math.min(innerWidth - r.width - 8, left)) + 'px';
+      // a side bar is a wall: the menu stays on the page side of it
+      const minX = e && e.side === 'left' ? e.at + 10 : 8, maxX = e && e.side === 'right' ? e.at - 10 : innerWidth - 8;
+      m.style.left = Math.max(minX, Math.min(maxX - r.width, left)) + 'px';
       m.style.transformOrigin = `${t.type === 'click' ? '100%' : '0'} ${down ? '0' : '100%'}`;
     };
     buildMenu(anchor, genModel(items, opener), head, place);

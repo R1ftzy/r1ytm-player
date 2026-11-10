@@ -6,7 +6,7 @@
     // panel stays smooth. The bar keeps updating, it is the live preview for the bar settings.
     const busy = !!setEl;
     if (!busy && performance.now() > animatingUntil) hideBase();   // skip layout-heavy work mid-animation
-    if (tick++ % 4 === 0 && !busy) syncGuideEntry();      // sidebar entry: once a second is plenty
+    if (tick++ % 4 === 0 && !busy) { syncGuideEntry(); syncBrand(); }   // sidebar entry, header logo: once a second is plenty
     if (tick % 4 === 2 && !busy && performance.now() > animatingUntil) sweepBg();   // custom background: clear new page backgrounds
     const pk = pageKey();                                 // another kind of page: its own dim / blur / header
     if (pk !== curPage) {
@@ -58,12 +58,14 @@
     const v = video();
     if (v) {
       if (seeking === null) fill.style.width = (v.duration ? (v.currentTime / v.duration) * 100 : 0) + '%';
-      if (domClassic) {
+      if (formNow === 'rail') { drawRing(); setProgress(v.duration ? (v.currentTime / v.duration) * 100 : 0); }
+      if (formNow === 'classic' || formNow === 'rail') {
         const tt = mmss(v.currentTime) + ' / ' + mmss(v.duration);
         if (timeEl.textContent !== tt) timeEl.textContent = tt;
       }
       if (v.paused !== wasPaused) {
         wasPaused = v.paused;
+        bar.classList.toggle('am-paused', v.paused);
         play.replaceChildren(svg(v.paused ? P.play : P.pause));
       }
       const muted = v.muted || getVolume() === 0;
@@ -108,8 +110,17 @@
     setVars.remove();
     posBase.remove();
     posStyle.remove();
-    ['--am-hx', '--am-hw', '--am-hy'].forEach(v => bar.style.removeProperty(v));
-    document.documentElement.classList.remove('am-pos-' + posNow, 'am-in-header', 'am-top-float', 'am-search-open', 'am-dock');
+    ['--am-hx', '--am-hw', '--am-hy', '--am-vx', '--am-vw', '--am-vy', '--am-vb', '--am-rpad'].forEach(v => bar.style.removeProperty(v));
+    gFoot.remove();
+    if (brandEl) brandEl.remove();
+    document.querySelectorAll('.am-brand-crop, .am-lib-out').forEach(n => { n.classList.remove('am-brand-crop', 'am-lib-out'); n.style.removeProperty('--am-brand-h'); });
+    flyClear();
+    fly.remove();
+    shade.remove();
+    edge.remove();
+    rope.remove();
+    document.documentElement.classList.remove('am-pos-' + posNow, 'am-in-header', 'am-top-float', 'am-search-open', 'am-dock',
+      'am-side', 'am-side-in', 'am-side-float', 'am-side-full', 'am-brand-on');
     document.documentElement.classList.remove('am-refract', 'am-easy-track');
     refractDefs.remove();
     document.documentElement.classList.remove('am-player-open', 'am-animating', 'am-fs', 'am-mini-hidden');

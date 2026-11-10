@@ -232,6 +232,18 @@
       ? { title: meta.title, sub: [meta.artist, meta.album].filter(Boolean).join(' · '), img: art.src } : null;
     const place = m => {
       const br = bar.getBoundingClientRect(), down = posNow === 'top';
+      if (posNow === 'left' || posNow === 'right') {
+        // beside the rail / card, level with the button, kept on screen
+        m.style.maxHeight = (innerHeight - 16) + 'px';
+        document.body.append(m);
+        const b = anchor.getBoundingClientRect(), r = m.getBoundingClientRect();
+        const left = posNow === 'left' ? br.right + 10 : br.left - 10 - r.width;
+        const top = Math.max(8, Math.min(innerHeight - r.height - 8, b.top - 8));
+        m.style.left = Math.max(8, left) + 'px';
+        m.style.top = top + 'px';
+        m.style.transformOrigin = `${posNow === 'left' ? '0' : '100%'} ${Math.round(b.top + b.height / 2 - top)}px`;
+        return;
+      }
       if (down) {
         m.style.top = (br.bottom + 10) + 'px';
         m.style.maxHeight = Math.max(160, innerHeight - br.bottom - 10 - 8) + 'px';

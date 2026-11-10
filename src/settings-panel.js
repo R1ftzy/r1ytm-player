@@ -4,9 +4,9 @@
   const ZEN_ENDS = [['None', 0], ['.', 1], [',', 2]];
   const SETTINGS = [
     { group: 'Bar & menus', sub: 'Transparency', key: 'barAlpha', label: 'Bar opacity', min: 0, max: 90, step: 1, def: 28, unit: '%',
-      css: v => ['--am-bar-a', v / 100], scope: '.am-bar' },
+      css: v => ['--am-bar-a', v / 100], scope: '.am-bar, .am-fly' },
     { group: 'Bar & menus', sub: 'Transparency', key: 'barBlur', label: 'Bar blur', min: 0, max: 60, step: 1, def: 28, unit: 'px',
-      css: v => ['--am-bar-blur', v + 'px'], scope: '.am-bar' },
+      css: v => ['--am-bar-blur', v + 'px'], scope: '.am-bar, .am-fly' },
     { group: 'Bar & menus', sub: 'Transparency', key: 'menuAlpha', label: 'Menu opacity', min: 30, max: 98, step: 1, def: 72, unit: '%',
       css: v => ['--am-menu-a', v / 100], scope: '.am-menu' },
     { group: 'Bar & menus', sub: 'Transparency', key: 'menuBlur', label: 'Menu blur', min: 0, max: 80, step: 1, def: 40, unit: 'px',
@@ -20,9 +20,10 @@
       css: v => ['--am-size', v / 100], scope: '.am-bar, ytmusic-section-list-renderer, ytmusic-search-page' },
     { group: 'Bar & menus', sub: 'Size & position', key: 'menuSize', label: 'Menu size', min: 85, max: 125, step: 5, def: 100, unit: '%',
       css: v => ['--am-menu-size', v / 100], scope: '.am-menu' },
-    { group: 'Bar & menus', sub: 'Size & position', key: 'barPos', type: 'choice', label: 'Position', options: [['Bottom', 0], ['Top', 1]],
-      min: 0, max: 1, def: 0, change: () => { placeBar(); hideBase(); },
-      note: () => "Top + Compact sits in YouTube Music's header. Phones always use the bottom" },
+    { group: 'Bar & menus', sub: 'Size & position', key: 'barPos', type: 'choice', label: 'Position',
+      options: [['Bottom', 0], ['Top', 1], ['Left', 2], ['Right', 3]],
+      min: 0, max: 3, def: 0, change: () => { placeBar(); hideBase(); },
+      note: () => "Top + Compact sits in YouTube Music's header, Left in its sidebar. Phones always use the bottom" },
     { group: 'Bar & menus', sub: 'Size & position', key: 'barFloat', type: 'toggle', label: 'Floating', min: 0, max: 1, def: 1,
       change: () => { placeBar(); hideBase(); },
       note: () => "Off: the bar fills the width and sits on the edge of the window, like YouTube Music's own" },
@@ -55,13 +56,16 @@
       min: 0, max: 1, def: 0, dep: 'zenLyrics', note: () => 'Above the buttons, or under the text at the top' },
     { group: 'Zen', sub: 'Lyrics', key: 'zenLyricsSmooth', type: 'toggle', label: 'Smooth lyrics', min: 0, max: 1, def: 0, dep: 'zenLyrics',
       note: () => 'Lines slide up and fade, instead of a hard cut' },
+    // YouTube Music's own header; its own category, after Zen (see LATE_GROUPS)
+    { group: 'Header', key: 'brand', type: 'toggle', label: 'R1ytm logo', min: 0, max: 1, def: 0,
+      change: () => syncBrand(), note: () => "R1ytm in place of “Music” in YouTube Music's logo, top left" },
     // how this panel looks: categories on the side (1, Modern) or the original long list (0, Legacy). No group: it is
     // the switch in the panel's footer, not a row
     { key: 'setLayout', min: 0, max: 1, def: 1 },
   ];
   // A row's group is its category (a page in the Modern layout); sub splits a category into cards with a small
   // heading. Rows are gathered by group and sub wherever they are in the list, so order only matters inside a card.
-  const LATE_GROUPS = ['Zen'];        // these groups go at the end of the panel, after the look groups
+  const LATE_GROUPS = ['Zen', 'Header'];        // these groups go at the end of the panel, after the look groups
   // Better Lyrics (a separate extension) adds its stylesheet links and an empty overlay div to the page on load,
   // whether or not lyrics are shown. Its own scripts are in an isolated world, so the page is all we can see.
   const hasBetterLyrics = () => !!document.querySelector('link[id^="blyrics-style-"], #blyrics-ad-overlay, #blyrics-wrapper');
