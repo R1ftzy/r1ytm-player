@@ -57,12 +57,15 @@
     const head = rowHead(t.el);
     const anchor = t.type === 'click' ? t.el : el('span');   // a right-click has no button to highlight
     const place = m => {
-      // next to the button (or the mouse): below if it fits above our bar, else above; scrolls if too tall
+      // next to the button (or the mouse): below if it fits between it and our bar, else above; never over the bar
+      // (a bottom bar is a floor, a top bar a ceiling); scrolls if too tall
       const a = t.type === 'click' ? t.el.getBoundingClientRect() : { left: t.x, right: t.x, top: t.y, bottom: t.y, width: 0 };
-      const floor = bar.isConnected && !bar.classList.contains('am-hidden') ? bar.getBoundingClientRect().top - 10 : innerHeight - 8;
+      const e = barEdge();
+      const floor = e && e.side === 'bottom' ? e.at - 10 : innerHeight - 8;
+      const ceil = e && e.side === 'top' ? e.at + 10 : 8;
       document.body.append(m);
       const r = m.getBoundingClientRect();
-      const below = floor - (a.bottom + 6), above = a.top - 6 - 8;
+      const below = floor - (a.bottom + 6), above = a.top - 6 - ceil;
       const down = r.height <= below || below >= above;
       m.style.maxHeight = Math.max(160, down ? below : above) + 'px';
       const h = Math.min(r.height, Math.max(160, down ? below : above));

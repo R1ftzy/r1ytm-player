@@ -18,6 +18,8 @@
     }
     if (tick % 4 === 1 && !busy && curPage === 'artist') syncArtist();
     if (tick % 4 === 3 && !busy) roomForPlaying();        // room for the playing row's overlay
+    placeBar();                                           // bottom / top, in or under the header
+    syncSearch();
     updateRefractMap();                                   // no-op unless refraction is on and the bar changed size
     watchPage();
     onPageState();
@@ -56,6 +58,10 @@
     const v = video();
     if (v) {
       if (seeking === null) fill.style.width = (v.duration ? (v.currentTime / v.duration) * 100 : 0) + '%';
+      if (domClassic) {
+        const tt = mmss(v.currentTime) + ' / ' + mmss(v.duration);
+        if (timeEl.textContent !== tt) timeEl.textContent = tt;
+      }
       if (v.paused !== wasPaused) {
         wasPaused = v.paused;
         play.replaceChildren(svg(v.paused ? P.play : P.pause));
@@ -100,6 +106,10 @@
     styleEl.remove();
     setStyle.remove();
     setVars.remove();
+    posBase.remove();
+    posStyle.remove();
+    ['--am-hx', '--am-hw', '--am-hy'].forEach(v => bar.style.removeProperty(v));
+    document.documentElement.classList.remove('am-pos-' + posNow, 'am-in-header', 'am-top-float', 'am-search-open', 'am-dock');
     document.documentElement.classList.remove('am-refract', 'am-easy-track');
     refractDefs.remove();
     document.documentElement.classList.remove('am-player-open', 'am-animating', 'am-fs', 'am-mini-hidden');

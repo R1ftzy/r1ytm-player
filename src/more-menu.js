@@ -223,21 +223,28 @@
     return all;
   };
 
-  // the bar's 3-dot: fixed layout, always above the bar, right edge at the button; too tall -> it scrolls
+  // the bar's 3-dot: fixed layout, on the page side of the bar (above a bottom bar, below a top bar), right edge at
+  // the button; too tall -> it scrolls
   const openMenu = anchor => {
     if (menuEl) { closeMenu(); return; }
     const meta = navigator.mediaSession.metadata;
     const head = meta && meta.title
       ? { title: meta.title, sub: [meta.artist, meta.album].filter(Boolean).join(' · '), img: art.src } : null;
     const place = m => {
-      const barTop = bar.getBoundingClientRect().top;
-      m.style.bottom = (innerHeight - barTop + 10) + 'px';
-      m.style.maxHeight = Math.max(160, barTop - 10 - 8) + 'px';
+      const br = bar.getBoundingClientRect(), down = posNow === 'top';
+      if (down) {
+        m.style.top = (br.bottom + 10) + 'px';
+        m.style.maxHeight = Math.max(160, innerHeight - br.bottom - 10 - 8) + 'px';
+        m.classList.add('am-menu-down');
+      } else {
+        m.style.bottom = (innerHeight - br.top + 10) + 'px';
+        m.style.maxHeight = Math.max(160, br.top - 10 - 8) + 'px';
+      }
       document.body.append(m);
       const b = anchor.getBoundingClientRect(), r = m.getBoundingClientRect();
       const left = Math.max(8, Math.min(innerWidth - r.width - 8, b.right - r.width + 8));
       m.style.left = left + 'px';
-      m.style.transformOrigin = `${Math.round(b.left + b.width / 2 - left)}px 100%`;
+      m.style.transformOrigin = `${Math.round(b.left + b.width / 2 - left)}px ${down ? '0' : '100%'}`;
     };
     const m0 = buildMenu(anchor, menuModel(), head, place);
     syncMenuWithYt(menuEl, m0);

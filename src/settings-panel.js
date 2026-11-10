@@ -1,6 +1,6 @@
   /* ---------- settings (sidebar entry "r1ytm" -> panel) ---------- */
   // Values live in localStorage ("am-settings") and are applied as CSS variables on <html>; the bar layout
-  // (full / compact) keeps its own key ("am-bar-compact") through applyMode().
+  // (full / compact / classic) keeps its own key ("am-bar-layout") through applyMode().
   const ZEN_ENDS = [['None', 0], ['.', 1], [',', 2]];
   const SETTINGS = [
     { group: 'Bar & menus', sub: 'Transparency', key: 'barAlpha', label: 'Bar opacity', min: 0, max: 90, step: 1, def: 28, unit: '%',
@@ -16,11 +16,17 @@
       disabled: () => !canRefract },
     { group: 'Bar & menus', sub: 'Glass', key: 'refractStrength', label: 'Refraction strength', min: 10, max: 200, step: 1, def: 90, unit: 'px',
       dep: 'refract' },
-    { group: 'Bar & menus', sub: 'Size', key: 'barSize', label: 'Bar size', min: 80, max: 130, step: 5, def: 100, unit: '%',
+    { group: 'Bar & menus', sub: 'Size & position', key: 'barSize', label: 'Bar size', min: 80, max: 130, step: 5, def: 100, unit: '%',
       css: v => ['--am-size', v / 100], scope: '.am-bar, ytmusic-section-list-renderer, ytmusic-search-page' },
-    { group: 'Bar & menus', sub: 'Size', key: 'menuSize', label: 'Menu size', min: 85, max: 125, step: 5, def: 100, unit: '%',
+    { group: 'Bar & menus', sub: 'Size & position', key: 'menuSize', label: 'Menu size', min: 85, max: 125, step: 5, def: 100, unit: '%',
       css: v => ['--am-menu-size', v / 100], scope: '.am-menu' },
-    { group: 'Bar & menus', sub: 'Size', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
+    { group: 'Bar & menus', sub: 'Size & position', key: 'barPos', type: 'choice', label: 'Position', options: [['Bottom', 0], ['Top', 1]],
+      min: 0, max: 1, def: 0, change: () => { placeBar(); hideBase(); },
+      note: () => "Top + Compact sits in YouTube Music's header. Phones always use the bottom" },
+    { group: 'Bar & menus', sub: 'Size & position', key: 'barFloat', type: 'toggle', label: 'Floating', min: 0, max: 1, def: 1,
+      change: () => { placeBar(); hideBase(); },
+      note: () => "Off: the bar fills the width and sits on the edge of the window, like YouTube Music's own" },
+    { group: 'Bar & menus', sub: 'Size & position', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
       note: () => 'Grows when you point at it, easier to drag' },
     // zen screen (zen.js reads these when zen opens); shown after Font / Background (see LATE_GROUPS).
     // A 'choice' is a row of segment buttons; its value is the number next to each label.
@@ -173,6 +179,7 @@
     const css = [...by].map(([sel, decl]) => `${sel} { ${decl}}`).join('\n');
     if (setVars.textContent !== css) setVars.textContent = css;
     document.documentElement.classList.toggle('am-easy-track', !!settings.easyTrack);
+    document.documentElement.classList.toggle('am-dock', !settings.barFloat);
     applyRefraction();
   };
   const saveSettings = () => store.set('am-settings', JSON.stringify(settings));
@@ -212,7 +219,6 @@
     lg.append(ytLogo());
     const ht = el('div', 'am-set-htext', head);
     el('div', 'am-set-title', ht).textContent = 'r1ytm';
-    el('div', 'am-set-sub', ht).textContent = 'Bar & menu settings';
     const x = el('button', 'am-set-x', head);
     x.title = 'Close';
     x.append(svg(P_CLOSE));
@@ -273,6 +279,7 @@
           applySettings();
           saveSettings();
           show();
+          if (s.change) s.change();
         });
         if (off) { sw.disabled = true; sw.classList.add('am-set-off'); }
         show();
@@ -317,23 +324,23 @@
         for (const [sub, rows] of subs) {
           if (sub) el('div', 'am-set-subhead', p).textContent = sub;
           const card = el('div', 'am-set-card', p);
-          if (sub === 'Size') sizeCard = card;
+          if (sub === 'Size & position') sizeCard = card;
           rows.forEach(s => addRow(s, card));
         }
       }
     };
     addGroups(SETTINGS.filter(s => !LATE_GROUPS.includes(s.group)));
-    // bar layout (full / compact), in the size card
+    // bar layout (full / compact / classic), in the size card
     const lay = el('div', 'am-set-row am-set-inline', sizeCard);
     el('span', 'am-set-label', lay).textContent = 'Bar layout';
     const seg = el('div', 'am-set-seg', lay);
-    const segBtns = [['Full', false], ['Compact', true]].map(([t, compact]) => {
+    const segBtns = [['Full', 'full'], ['Compact', 'compact'], ['Classic', 'classic']].map(([t, mode]) => {
       const b = el('button', 'am-set-segbtn', seg);
       b.textContent = t;
-      b.addEventListener('click', () => { applyMode(compact); showSeg(); });
-      return [b, compact];
+      b.addEventListener('click', () => { applyMode(mode); placeBar(); hideBase(); showSeg(); });
+      return [b, mode];
     });
-    const showSeg = () => segBtns.forEach(([b, c]) => b.classList.toggle('am-on', bar.classList.contains('am-compact') === c));
+    const showSeg = () => segBtns.forEach(([b, m]) => b.classList.toggle('am-on', layoutNow === m));
     showSeg();
     const lookRefresh = buildLookSettings(p);      // Font + Background groups
     addGroups(SETTINGS.filter(s => LATE_GROUPS.includes(s.group)));
@@ -347,7 +354,9 @@
       for (const s of SETTINGS) settings[s.key] = s.def;
       applySettings();
       saveSettings();
-      applyMode(false);
+      applyMode('full');
+      placeBar();
+      hideBase();
       ranges.forEach(f => f());
       showSeg();
       // font / background back to default; the saved font file, image and gradient stay and can be picked again

@@ -68,6 +68,23 @@
     .am-bar.am-compact .am-btn { width: calc(30px * var(--am-s)); height: calc(30px * var(--am-s)); }
     .am-bar.am-compact .am-group { gap: 2px; }
 
+    /* classic: YouTube Music's own order. The song on the left, the transport centered (its play button a circle),
+       time / like / menu / the rest on the right, the progress bar along the top edge */
+    .am-bar.am-classic { --am-h: 64px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 16px; padding: 0 14px; }
+    .am-classic .am-lcd { display: none; }
+    .am-cl-left { grid-column: 1; min-width: 0; display: flex; align-items: center; gap: 12px; }
+    .am-cl-left .am-info { padding-bottom: 0; }
+    .am-classic > .am-left { grid-column: 2; gap: 8px; }
+    .am-cl-right { grid-column: 3; justify-self: end; min-width: 0; display: flex; align-items: center; gap: 4px; }
+    .am-classic .am-btn.am-big { width: calc(44px * var(--am-s)); height: calc(44px * var(--am-s)); border-radius: 50%;
+      background: rgb(255 255 255 / .1); }
+    .am-classic .am-btn.am-big:hover { background: rgb(255 255 255 / .18); }
+    .am-classic > .am-track { left: calc(22px * var(--am-s)); right: calc(22px * var(--am-s)); top: -4px; bottom: auto; }
+    html.am-dock .am-classic > .am-track { left: 0; right: 0; }
+    .am-time { font-size: calc(12px * var(--am-s)); color: rgb(255 255 255 / .6); font-variant-numeric: tabular-nums;
+      white-space: nowrap; margin-right: 8px; }
+    .am-idle .am-time { display: none; }
+
     .am-group { display: flex; align-items: center; gap: 4px; }
     .am-left  { justify-self: start; }
     .am-right { justify-self: end; }

@@ -18,10 +18,11 @@
     for (const n of document.querySelectorAll('ytmusic-app, ytmusic-app-layout')) {
       n.style.setProperty('--ytmusic-player-bar-height', '0px', 'important');
     }
-    // player page: keep YTM's own bottom space so its layout stays aligned (none in fullscreen)
+    // player page: keep YTM's own bottom space so its layout stays aligned (none in fullscreen, none with the bar at
+    // the top: placeBar() gives it space at the start instead)
     const pp = playerPage();
-    const space = bar.offsetHeight ? (bar.offsetHeight + 28) + 'px' : PLAYER_PAGE_BAR_SPACE;   // bar + its margins
-    if (pp) pp.style.setProperty('--ytmusic-player-bar-height', fs ? '0px' : space, 'important');
+    const space = bar.offsetHeight ? (bar.offsetHeight + (settings.barFloat ? 28 : 0)) + 'px' : PLAYER_PAGE_BAR_SPACE;   // bar + its margins
+    if (pp) pp.style.setProperty('--ytmusic-player-bar-height', fs || posNow !== 'bottom' ? '0px' : space, 'important');
 
     document.querySelectorAll(`${MINI}, ytmusic-player-bar, #player-bar-background`).forEach(hideNode);
 

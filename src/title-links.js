@@ -73,12 +73,47 @@
     if (v) v.muted = !v.muted;
   });
 
-  const applyMode = compact => {
-    bar.classList.toggle('am-compact', compact);
-    modeBtn.replaceChildren(svg(compact ? P.expand : P.shrink));
-    modeBtn.title = compact ? 'Full bar' : 'Compact bar';
-    store.set('am-bar-compact', compact ? '1' : '0');
+  /* bar layouts: full, compact (a centered pill) and classic (YouTube Music's own order: the song on the left, the
+     transport in the middle, time / like / menu / volume on the right, the progress bar along the top edge).
+     Classic needs another order, so its parts move into two boxes of their own, and back for the other layouts.
+     A phone always gets the full layout's order (its own CSS is built on it). */
+  const LAYOUTS = ['full', 'compact', 'classic'];
+  const LAYOUT_NAMES = { full: 'Full bar', compact: 'Compact bar', classic: 'Classic bar' };
+  const clLeft = el('div', 'am-cl-left'), clRight = el('div', 'am-cl-right');
+  const timeEl = el('span', 'am-time');
+  let layoutNow = 'full', domClassic = false;
+  const syncLayoutDom = () => {
+    const want = layoutNow === 'classic' && !isMobile();
+    if (want === domClassic) return;
+    domClassic = want;
+    bar.classList.toggle('am-classic', want);
+    if (want) {
+      clLeft.append(logo, art, info);
+      clRight.append(timeEl, likeBtn, moreBtn, right);
+      bar.prepend(clLeft);                      // song | transport | the rest; the progress bar on the bar itself
+      left.after(clRight);
+      bar.append(track);
+    } else {
+      lcd.prepend(logo, art, info);
+      lcd.append(likeBtn, moreBtn, track);
+      bar.append(right);                        // transport | now playing | the rest, as before
+      clLeft.remove();
+      clRight.remove();
+    }
   };
-  const modeBtn = btn(right, 'shrink', () => applyMode(!bar.classList.contains('am-compact')), 'am-mode');
-  applyMode(store.get('am-bar-compact', '0') === '1');
+  const mmss = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  const nextLayout = () => LAYOUTS[(LAYOUTS.indexOf(layoutNow) + 1) % LAYOUTS.length];
+  const applyMode = mode => {
+    layoutNow = LAYOUTS.includes(mode) ? mode : 'full';
+    bar.classList.toggle('am-compact', layoutNow === 'compact');
+    syncLayoutDom();
+    // the bar's own button goes to the next layout: full -> compact -> classic -> full
+    const next = nextLayout();
+    modeBtn.replaceChildren(svg(next === 'compact' ? P.shrink : P.expand));
+    modeBtn.title = LAYOUT_NAMES[next];
+    store.set('am-bar-layout', layoutNow);
+  };
+  const modeBtn = btn(right, 'shrink', () => { applyMode(nextLayout()); placeBar(); }, 'am-mode');
+  // the old key ("am-bar-compact": 1 / 0) still counts until a layout is picked
+  applyMode(store.get('am-bar-layout', store.get('am-bar-compact', '0') === '1' ? 'compact' : 'full'));
 

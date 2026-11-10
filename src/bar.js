@@ -40,7 +40,7 @@
     else console.warn('[am-bar] like button not found');
   }, 'am-lcd-btn am-like');
   likeBtn.title = 'Like';
-  btn(lcd, 'more', b => openMenu(b), 'am-lcd-btn am-lcd-more');
+  const moreBtn = btn(lcd, 'more', b => openMenu(b), 'am-lcd-btn am-lcd-more');
   const track = el('div', 'am-track', lcd);
   const fill = el('div', 'am-fill', track);
   // click or drag to seek. While dragging only the fill follows the pointer; the song seeks once, on release

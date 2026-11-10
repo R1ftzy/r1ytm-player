@@ -33,6 +33,7 @@ const SECTIONS = [
   'settings-panel',  // sidebar "r1ytm" entry -> settings panel
   'look',            // custom font + custom background
   'gradient-maker',  // gradient maker
+  'bar-position',    // bar at the bottom or the top (in YTM's header / under it)
   'zen',             // zen mode: locked, title-card listening screen
   'sync-loop',       // the interval that keeps everything in sync + teardown
 ];
