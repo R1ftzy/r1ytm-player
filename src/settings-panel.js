@@ -29,6 +29,22 @@
       note: () => "Off: the bar fills the width and sits on the edge of the window, like YouTube Music's own" },
     { group: 'Bar & menus', sub: 'Size & position', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
       note: () => 'Grows when you point at it, easier to drag' },
+    // Misc, the last category of the panel (see LATE_GROUPS): YouTube Music's header, updates, experimental features.
+    // Its cards show in this order (order of first appearance).
+    { group: 'Misc', sub: 'Header', key: 'brand', type: 'toggle', label: 'R1ytm logo', min: 0, max: 1, def: 0,
+      change: () => syncBrand(), note: () => "R1ytm in place of “Music” in YouTube Music's logo, top left" },
+    // changelog.js: the "What's new" popup after an update. An 'action' row is a button, it has no value of its own
+    { group: 'Misc', sub: 'Updates', key: 'whatsNew', type: 'toggle', label: "Show what's new after an update", min: 0, max: 1, def: 1,
+      note: () => 'A short list of the changes, once per new version' },
+    { group: 'Misc', sub: 'Updates', key: 'whatsNewOpen', type: 'action', label: "What's new", button: 'Open',
+      min: 0, max: 0, def: 0, run: () => openChangelog('all'), note: () => 'Every version so far' },
+    // vinyl.js
+    { group: 'Misc', sub: 'Experimental', key: 'vinyl', type: 'toggle', label: 'Vinyl', min: 0, max: 1, def: 0,
+      note: () => 'The art turns into a spinning record, centered on the left edge. Not in video mode or on phones' },
+    { group: 'Misc', sub: 'Experimental', key: 'vinylSpin', type: 'choice', label: 'Spin',
+      options: [['Still', 0], ['Slow', 1], ['Medium', 2], ['33⅓ rpm', 3]], min: 0, max: 3, def: 1, dep: 'vinyl',
+      css: v => ['--am-vinyl-dur', VINYL_SPIN[v] + 's'], scope: '.am-vinyl',
+      note: () => 'Stops while the music is paused' },
     // zen screen (zen.js reads these when zen opens); shown after Font / Background (see LATE_GROUPS).
     // A 'choice' is a row of segment buttons; its value is the number next to each label.
     { group: 'Zen', sub: 'Look', key: 'zenLayout', type: 'choice', label: 'Layout', options: [['Auto', 0], ['Wide', 1], ['4:3', 2]],
@@ -56,16 +72,13 @@
       min: 0, max: 1, def: 0, dep: 'zenLyrics', note: () => 'Above the buttons, or under the text at the top' },
     { group: 'Zen', sub: 'Lyrics', key: 'zenLyricsSmooth', type: 'toggle', label: 'Smooth lyrics', min: 0, max: 1, def: 0, dep: 'zenLyrics',
       note: () => 'Lines slide up and fade, instead of a hard cut' },
-    // YouTube Music's own header; its own category, after Zen (see LATE_GROUPS)
-    { group: 'Header', key: 'brand', type: 'toggle', label: 'R1ytm logo', min: 0, max: 1, def: 0,
-      change: () => syncBrand(), note: () => "R1ytm in place of “Music” in YouTube Music's logo, top left" },
     // how this panel looks: categories on the side (1, Modern) or the original long list (0, Legacy). No group: it is
     // the switch in the panel's footer, not a row
     { key: 'setLayout', min: 0, max: 1, def: 1 },
   ];
   // A row's group is its category (a page in the Modern layout); sub splits a category into cards with a small
   // heading. Rows are gathered by group and sub wherever they are in the list, so order only matters inside a card.
-  const LATE_GROUPS = ['Zen', 'Header'];        // these groups go at the end of the panel, after the look groups
+  const LATE_GROUPS = ['Zen', 'Misc'];        // these groups go at the end of the panel, after the look groups
   // Better Lyrics (a separate extension) adds its stylesheet links and an empty overlay div to the page on load,
   // whether or not lyrics are shown. Its own scripts are in an isolated world, so the page is all we can see.
   const hasBetterLyrics = () => !!document.querySelector('link[id^="blyrics-style-"], #blyrics-ad-overlay, #blyrics-wrapper');
@@ -261,6 +274,16 @@
         };
         show();
         ranges.push(show);
+        return;
+      }
+      if (s.type === 'action') {                          // a button that does something (no value to keep)
+        const row = el('div', 'am-set-row am-set-inline', section);
+        const lt = el('div', 'am-set-ltext', row);
+        el('div', 'am-set-label', lt).textContent = s.label;
+        if (s.note) el('div', 'am-set-note', lt).textContent = s.note();
+        const b = el('button', 'am-set-btn am-set-soft', row);
+        b.textContent = s.button;
+        b.addEventListener('click', () => s.run());
         return;
       }
       if (s.type === 'toggle') {

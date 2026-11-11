@@ -35,14 +35,19 @@ const SECTIONS = [
   'gradient-maker',  // gradient maker
   'bar-position',    // bar at the bottom or the top (in YTM's header / under it)
   'zen',             // zen mode: locked, title-card listening screen
+  'vinyl',           // player page art as a spinning record
+  'changelog',       // "What's new" popup after an update
   'sync-loop',       // the interval that keeps everything in sync + teardown
 ];
 
+// the version (from the manifest) goes into the script as VERSION, for the "What's new" popup (src/changelog.js)
+const { version } = JSON.parse(readFileSync(fileURLToPath(new URL('extension/manifest.json', import.meta.url)), 'utf8'));
 const PROLOGUE = `// Apple Music-style bar for YouTube Music
 // Browser extension content script (Chrome + Firefox).
 // Injected on https://music.youtube.com/* only.
 (() => {
   'use strict';
+  const VERSION = '${version}';
 
 `;
 const EPILOGUE = '})();\n';
@@ -67,7 +72,6 @@ const parts = SECTIONS.map(n => {
 });
 const content = PROLOGUE + parts.join('') + EPILOGUE;
 
-const { version } = JSON.parse(readFileSync(p('extension/manifest.json'), 'utf8'));
 const header = `// ==UserScript==
 // @name         r1ytm
 // @namespace    r1ytm

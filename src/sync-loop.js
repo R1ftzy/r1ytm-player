@@ -34,6 +34,7 @@
       const src = m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : '';
       if (src && art.src !== src) art.src = src;
     }
+    { const v = video(); syncVinyl(idle ? '' : (m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : ''), !v || v.paused); }
 
     // mobile: YTM's own mini art is hidden while the player page is open, and fades back in after it closed
     const openNow = stateOpen();
@@ -132,6 +133,8 @@
     document.querySelectorAll('ytmusic-player').forEach(n => { n.style.removeProperty('--am-dx'); n.style.removeProperty('--am-dy'); });
     if (gmEl) gmEl.remove();
     zenOff();
+    vinylOff();
+    changelogOff();
     bgLayer.remove();
     restoreCleared();
     if (bgUrl) URL.revokeObjectURL(bgUrl);

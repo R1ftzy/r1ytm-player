@@ -6,4 +6,5 @@
   const SLIDE_FROM = '12vh';                     // how far below the player page starts its slide
   const MINI_ART_FADE_MS = 450;                  // mobile: fade-in of YTM's own mini art after the player page closes
   const MINI_ART_DELAY_MS = 400;                 // ...starting this long after the page reports closed
+  const VINYL_SPIN = [0, 40, 16, 1.8];           // vinyl: seconds per turn for the Spin choice (0 = still; 1.8 s = 33⅓ rpm)
 

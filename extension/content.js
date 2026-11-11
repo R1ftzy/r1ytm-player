@@ -3,6 +3,7 @@
 // Injected on https://music.youtube.com/* only.
 (() => {
   'use strict';
+  const VERSION = '1.9.1';
 
   /* ---------- settings ---------- */
   const PLAYER_PAGE_BAR_SPACE = '88px';          // space the player page keeps free for the bar until it's measured (follows the bar size)
@@ -12,6 +13,7 @@
   const SLIDE_FROM = '12vh';                     // how far below the player page starts its slide
   const MINI_ART_FADE_MS = 450;                  // mobile: fade-in of YTM's own mini art after the player page closes
   const MINI_ART_DELAY_MS = 400;                 // ...starting this long after the page reports closed
+  const VINYL_SPIN = [0, 40, 16, 1.8];           // vinyl: seconds per turn for the Spin choice (0 = still; 1.8 s = 33⅓ rpm)
 
   /* ---------- icons & helpers ---------- */
   const NS = 'http://www.w3.org/2000/svg';
@@ -1630,6 +1632,22 @@
       note: () => "Off: the bar fills the width and sits on the edge of the window, like YouTube Music's own" },
     { group: 'Bar & menus', sub: 'Size & position', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
       note: () => 'Grows when you point at it, easier to drag' },
+    // Misc, the last category of the panel (see LATE_GROUPS): YouTube Music's header, updates, experimental features.
+    // Its cards show in this order (order of first appearance).
+    { group: 'Misc', sub: 'Header', key: 'brand', type: 'toggle', label: 'R1ytm logo', min: 0, max: 1, def: 0,
+      change: () => syncBrand(), note: () => "R1ytm in place of “Music” in YouTube Music's logo, top left" },
+    // changelog.js: the "What's new" popup after an update. An 'action' row is a button, it has no value of its own
+    { group: 'Misc', sub: 'Updates', key: 'whatsNew', type: 'toggle', label: "Show what's new after an update", min: 0, max: 1, def: 1,
+      note: () => 'A short list of the changes, once per new version' },
+    { group: 'Misc', sub: 'Updates', key: 'whatsNewOpen', type: 'action', label: "What's new", button: 'Open',
+      min: 0, max: 0, def: 0, run: () => openChangelog('all'), note: () => 'Every version so far' },
+    // vinyl.js
+    { group: 'Misc', sub: 'Experimental', key: 'vinyl', type: 'toggle', label: 'Vinyl', min: 0, max: 1, def: 0,
+      note: () => 'The art turns into a spinning record, centered on the left edge. Not in video mode or on phones' },
+    { group: 'Misc', sub: 'Experimental', key: 'vinylSpin', type: 'choice', label: 'Spin',
+      options: [['Still', 0], ['Slow', 1], ['Medium', 2], ['33⅓ rpm', 3]], min: 0, max: 3, def: 1, dep: 'vinyl',
+      css: v => ['--am-vinyl-dur', VINYL_SPIN[v] + 's'], scope: '.am-vinyl',
+      note: () => 'Stops while the music is paused' },
     // zen screen (zen.js reads these when zen opens); shown after Font / Background (see LATE_GROUPS).
     // A 'choice' is a row of segment buttons; its value is the number next to each label.
     { group: 'Zen', sub: 'Look', key: 'zenLayout', type: 'choice', label: 'Layout', options: [['Auto', 0], ['Wide', 1], ['4:3', 2]],
@@ -1657,16 +1675,13 @@
       min: 0, max: 1, def: 0, dep: 'zenLyrics', note: () => 'Above the buttons, or under the text at the top' },
     { group: 'Zen', sub: 'Lyrics', key: 'zenLyricsSmooth', type: 'toggle', label: 'Smooth lyrics', min: 0, max: 1, def: 0, dep: 'zenLyrics',
       note: () => 'Lines slide up and fade, instead of a hard cut' },
-    // YouTube Music's own header; its own category, after Zen (see LATE_GROUPS)
-    { group: 'Header', key: 'brand', type: 'toggle', label: 'R1ytm logo', min: 0, max: 1, def: 0,
-      change: () => syncBrand(), note: () => "R1ytm in place of “Music” in YouTube Music's logo, top left" },
     // how this panel looks: categories on the side (1, Modern) or the original long list (0, Legacy). No group: it is
     // the switch in the panel's footer, not a row
     { key: 'setLayout', min: 0, max: 1, def: 1 },
   ];
   // A row's group is its category (a page in the Modern layout); sub splits a category into cards with a small
   // heading. Rows are gathered by group and sub wherever they are in the list, so order only matters inside a card.
-  const LATE_GROUPS = ['Zen', 'Header'];        // these groups go at the end of the panel, after the look groups
+  const LATE_GROUPS = ['Zen', 'Misc'];        // these groups go at the end of the panel, after the look groups
   // Better Lyrics (a separate extension) adds its stylesheet links and an empty overlay div to the page on load,
   // whether or not lyrics are shown. Its own scripts are in an isolated world, so the page is all we can see.
   const hasBetterLyrics = () => !!document.querySelector('link[id^="blyrics-style-"], #blyrics-ad-overlay, #blyrics-wrapper');
@@ -1862,6 +1877,16 @@
         };
         show();
         ranges.push(show);
+        return;
+      }
+      if (s.type === 'action') {                          // a button that does something (no value to keep)
+        const row = el('div', 'am-set-row am-set-inline', section);
+        const lt = el('div', 'am-set-ltext', row);
+        el('div', 'am-set-label', lt).textContent = s.label;
+        if (s.note) el('div', 'am-set-note', lt).textContent = s.note();
+        const b = el('button', 'am-set-btn am-set-soft', row);
+        b.textContent = s.button;
+        b.addEventListener('click', () => s.run());
         return;
       }
       if (s.type === 'toggle') {
@@ -4595,6 +4620,304 @@
 
   // a session that was running when the page was reloaded comes straight back
   { const z = readZen(); if (z && (z.until === 0 || z.until > Date.now())) startZen(z.until, z.start || Date.now()); }
+  /* ---------- vinyl: the player page art as a big spinning record, centered on the left edge ---------- */
+  // A layer inside the player page's main panel (so it opens / closes with the page). Its center sits on the screen's
+  // left edge and it is cut only by the screen edges, so the right half of the record shows. Only the art turns (one
+  // composited layer, cheap); the grooves and the light on top stay still, as on a real turntable.
+  // Not in video mode (the video is the point there) and not on phones (other layout).
+  const vinylBox = el('div', 'am-vinyl');
+  const vinylDisc = el('div', 'am-vinyl-disc', vinylBox);
+  const vinylArt = el('img', 'am-vinyl-art', vinylDisc);
+  vinylArt.alt = '';
+  vinylArt.decoding = 'async';
+  el('div', 'am-vinyl-grooves', vinylDisc);
+  el('div', 'am-vinyl-shine', vinylDisc);
+  el('div', 'am-vinyl-hole', vinylDisc);
+  let vinylSrc = '';
+
+  const vinylStyle = el('style', null, document.head);
+  vinylStyle.textContent = `
+    html.am-vinyl-on ytmusic-player-page #main-panel { position: relative; isolation: isolate; }
+    html.am-vinyl-on .am-vinyl-unclip { overflow: visible !important; contain: none !important; clip-path: none !important; }
+    /* YTM's own art (the whole player element; in song mode it only shows the art) */
+    html.am-vinyl-on ytmusic-player-page #main-panel ytmusic-player:not([player-ui-state="PLAYER_BAR_ONLY"]):not([player-ui-state="MINIPLAYER"]) {
+      opacity: 0 !important; }
+    /* the box covers the whole window (placed from the panel's position), so the record is cut at the screen edges */
+    .am-vinyl { position: absolute; left: var(--am-vbx, 0); top: var(--am-vby, 0); width: 100vw; height: 100vh;
+      z-index: -1; overflow: hidden; pointer-events: none; display: none; }
+    html.am-vinyl-on .am-vinyl { display: block; }
+    .am-vinyl-disc { --r: var(--am-vr, 40vh); position: absolute; left: calc(var(--am-vcx, 0px) - var(--r)); top: calc(var(--am-vcy, 50vh) - var(--r));
+      width: calc(var(--r) * 2); height: calc(var(--r) * 2); border-radius: 50%; overflow: hidden; background: #111;
+      box-shadow: 0 0 0 1px rgb(255 255 255 / .06), 0 30px 80px rgb(0 0 0 / .55); }
+    .am-vinyl-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 50%;
+      opacity: 0; transition: opacity .5s ease; will-change: transform;
+      animation: am-vinyl-spin var(--am-vinyl-dur, 40s) linear infinite; }
+    .am-vinyl-art.am-ready { opacity: 1; }
+    html.am-vinyl-paused .am-vinyl-art { animation-play-state: paused; }
+    @keyframes am-vinyl-spin { to { transform: rotate(360deg); } }
+    /* fine grooves, a darker outer band, the edge of the label and a lead-out ring */
+    .am-vinyl-grooves { position: absolute; inset: 0; border-radius: 50%;
+      background:
+        radial-gradient(circle, transparent 33.6%, rgb(0 0 0 / .45) 34%, transparent 34.6%),
+        radial-gradient(circle, transparent 37%, rgb(0 0 0 / .25) 37.4%, transparent 38%),
+        radial-gradient(circle, transparent 94%, rgb(0 0 0 / .35) 96%, rgb(0 0 0 / .6) 100%),
+        repeating-radial-gradient(circle, rgb(0 0 0 / 0) 0 3px, rgb(0 0 0 / .09) 3px 4px); }
+    /* the light: two soft wedges, fixed while the record turns */
+    .am-vinyl-shine { position: absolute; inset: 0; border-radius: 50%; mix-blend-mode: soft-light;
+      background: conic-gradient(from 20deg, transparent 0deg, rgb(255 255 255 / .55) 18deg, transparent 40deg,
+        transparent 180deg, rgb(255 255 255 / .4) 198deg, transparent 220deg); }
+    .am-vinyl-hole { position: absolute; left: 50%; top: 50%; width: 3%; height: 3%; translate: -50% -50%; border-radius: 50%;
+      background: #0b0b0b; box-shadow: 0 0 0 2px rgb(255 255 255 / .12), inset 0 2px 4px rgb(0 0 0 / .8); }
+    @media (prefers-reduced-motion: reduce) { .am-vinyl-art { animation: none; } }
+  `;
+  vinylArt.addEventListener('load', () => vinylArt.classList.add('am-ready'));
+
+  // YTM art urls end in "=w544-h544-…": ask for a bigger one, the record is much larger than YTM's art
+  const bigArt = src => src.replace(/=w\d+-h\d+/, '=w1200-h1200');
+  const videoMode = pp => pp.hasAttribute('video-mode') ||
+    !!pp.querySelector('ytmusic-player[video-mode], ytmusic-player[video-mode_]');
+
+  // Placement, from the main panel's place on screen: the box over the window, the center on the screen's left edge
+  // at the panel's middle height, and the radius so the record reaches as far right as before (not into the queue).
+  // Not while the page animates in: it is scaled then, and the values would be off.
+  let vinylKey = '';
+  const placeVinyl = main => {
+    if (performance.now() < animatingUntil) return;
+    const r = main.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    // the center hole: in the middle of YTM's sidebar column when one is on screen, else on the screen's edge
+    const fs = isFullscreen();
+    const gd = !fs && activeGuide();
+    const cx = gd ? clamp(gd.mid, 0, r.left) : 0;
+    const rad = r.left - cx + Math.min(r.width * 0.84, r.height * 0.72);
+    // fullscreen: YTM's panel isn't centered on the screen there, so the record is centered on the window instead
+    const cy = fs ? innerHeight / 2 : r.top + r.height / 2;
+    const vals = [['--am-vbx', -r.left], ['--am-vby', -r.top], ['--am-vcx', cx], ['--am-vcy', cy], ['--am-vr', rad]];
+    const key = vals.map(v => Math.round(v[1])).join(',');
+    if (key === vinylKey) return;
+    vinylKey = key;
+    for (const [k, v] of vals) vinylBox.style.setProperty(k, Math.round(v) + 'px');
+  };
+
+  // The panel and the boxes between it and the player page may cut off what overflows them; those get a class that
+  // lets the record show past them (only while the record is on). Checked once each time the record is attached.
+  const unclipVinyl = (main, pp) => {
+    for (let n = main; n && n !== pp; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      if (cs.overflow !== 'visible' || cs.overflowX !== 'visible' || cs.overflowY !== 'visible' ||
+          /paint|strict|content/.test(cs.contain || '') || cs.clipPath !== 'none') n.classList.add('am-vinyl-unclip');
+    }
+  };
+
+  // called by the sync loop (4 times a second): one rect read, and only while the record shows
+  const syncVinyl = (src, paused) => {
+    const pp = playerPage();
+    const main = pp && pp.querySelector('#main-panel');
+    const on = !!settings.vinyl && !!main && !!src && !videoMode(pp) && !isMobile();
+    html.classList.toggle('am-vinyl-on', on);
+    html.classList.toggle('am-vinyl-paused', !!paused);
+    if (!on) return;
+    if (vinylBox.parentNode !== main) { main.prepend(vinylBox); vinylKey = ''; unclipVinyl(main, pp); }
+    placeVinyl(main);
+    const big = bigArt(src);
+    if (big !== vinylSrc) {
+      vinylSrc = big;
+      vinylArt.classList.remove('am-ready');
+      // the bigger size can fail for some art: fall back to the url as it was
+      vinylArt.onerror = big !== src ? () => { vinylArt.onerror = null; vinylArt.src = src; } : null;
+      vinylArt.src = big;
+    }
+  };
+  const vinylOff = () => {
+    vinylBox.remove();
+    vinylStyle.remove();
+    document.querySelectorAll('.am-vinyl-unclip').forEach(n => n.classList.remove('am-vinyl-unclip'));
+    html.classList.remove('am-vinyl-on', 'am-vinyl-paused');
+  };
+  /* ---------- "What's new": a popup with the changes, after an update ---------- */
+  // The version last seen is kept in localStorage ("am-seen-version"). When the script's VERSION (put in by build.mjs
+  // from the manifest) is newer, the popup lists every version since then, once, a moment after the page has loaded.
+  // Setting "Show what's new after an update" (Misc) turns it off; Misc > What's new opens the whole list any time.
+  // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
+  // whole list (marked "Next update"), never as a popup.
+  const CHANGELOG = [
+    { v: '1.9.1', date: '2026-11-11', title: 'A Misc category, a vinyl to try and this list', items: [
+      "What's new: this popup. It shows once after each update; turn it off under Misc",
+      'Misc: one category at the end of the settings for the YouTube Music header, updates and experimental features',
+      'Experimental: Vinyl (off by default). The art on the player page becomes a big spinning record, centered on the left column. It stops while the music is paused',
+    ] },
+    { v: '1.9.0', date: '2026-11-10', title: 'The bar on the left or right', items: [
+      'New Left and Right positions: an upright rail with the art, the progress as an outline around it, the heart, playback and the rest',
+      "Compact + Left sits in YouTube Music's sidebar: a rail when the sidebar is collapsed, a card when it is expanded",
+      'Full runs the whole height of the window, and the page moves aside for it. On the right, your account picture goes into the rail',
+      'Point at the art to roll out a tape with the song, the time and a progress bar you can drag',
+      'The volume slider opens upright, and the outline shrinks around the art while paused',
+      "Header settings: “R1ytm logo” shows R1ytm next to YouTube Music's red mark (off by default)",
+    ] },
+    { v: '1.8.0', date: '2026-11-10', title: 'The bar at the top, and a classic layout', items: [
+      "Position: Bottom or Top. Top + Compact sits in YouTube Music's header, next to a shorter search box that grows while you search",
+      "Classic layout, in YouTube Music's own order, next to Full and Compact",
+      "Floating: turn it off to make the bar full width at the edge of the window, like YouTube Music's own",
+      'Menus open on the page side of the bar, wherever the bar is',
+    ] },
+    { v: '1.7.0', date: '2026-11-09', title: 'Zen lyrics and a new settings layout', items: [
+      'Zen shows the line being sung from Better Lyrics: 1 or 2 lines, at the bottom or under the title, with a hard cut or a smooth slide',
+      'Zen settings: the layout, the fonts, which parts show, and what each line ends with',
+      'Settings come in two layouts: Modern (categories on the side) or Legacy (one long list)',
+      'Settings are faster, and sliders no longer slow the page down',
+    ] },
+    { v: '1.6.1', date: '2026-11-08', items: ['Zen mode uses less battery'] },
+    { v: '1.6.0', date: '2026-11-08', title: 'Zen mode', items: [
+      'A black title-card screen that locks the music for a time you pick (or with no limit)',
+      'Only play / pause, next, a sleep timer and a close button that unlocks when the time is up',
+    ] },
+    { v: '1.5.3', date: '2026-11-08', items: [
+      'Right-click works on the upcoming songs in the queue',
+      'The playing song gets a rounded highlight that fits its row',
+    ] },
+    { v: '1.5.2', date: '2026-11-05', items: [
+      'Hide the big banners at the top of pages',
+      'Artist pages: show the banner, a round picture, both or neither, and remove the dark shadow',
+      'Dim and blur the background separately for each kind of page',
+    ] },
+    { v: '1.5.1', date: '2026-11-05', items: ['Easy progress bar: it grows when you point at it, so it is easier to drag'] },
+    { v: '1.5.0', date: '2026-11-05', title: 'Fonts, backgrounds and the gradient maker', items: [
+      'Use any font from your device, from Google Fonts or from a font file',
+      'Set your own background: a color, an image or GIF, or a gradient',
+      'The gradient maker: paint with soft glowing brushes, then add grain, bloom and glass',
+    ] },
+    { v: '1.4.2', date: '2026-11-05', items: ['Clicking the bar no longer pauses the song in some YouTube Music layouts'] },
+    { v: '1.4.1', date: '2026-11-03', items: ['The r1ytm settings entry also shows in the collapsed sidebar'] },
+    { v: '1.4.0', date: '2026-11-03', items: ['Refraction: the edges of the bar bend the background like glass (Chrome, Edge and Brave)'] },
+    { v: '1.3.0', date: '2026-11-03', items: ['A settings panel for the bar and menus: how see-through and blurred they are'] },
+    { v: '1.2.0', date: '2026-11-03', items: ['Every 3-dot menu and right-click opens in one cleaner popup'] },
+    { v: '1.1.0', date: '2026-11-01', items: ['Works in the phone layout of YouTube Music'] },
+    { v: '1.0.0', date: '2026-11-01', title: 'The first version', items: [
+      "A floating, Apple Music style bar in place of YouTube Music's own, with playback, like, volume, lyrics and the queue",
+      'Click the bar to open the player page, with a smoother open animation',
+    ] },
+  ];
+  const SEEN_KEY = 'am-seen-version';
+  // -1, 0, 1 for "1.10.0" vs "1.9.0" (number by number, not as text)
+  const cmpV = (a, b) => {
+    const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) {
+      const d = (x[i] || 0) - (y[i] || 0);
+      if (d) return Math.sign(d);
+    }
+    return 0;
+  };
+
+  let clEl = null;
+  const closeChangelog = () => {
+    if (!clEl) return;
+    const c = clEl;
+    clEl = null;
+    c.classList.add('am-set-out');
+    setTimeout(() => c.remove(), 180);
+  };
+  // which: 'all', or a list of entries (the ones since the last version seen)
+  const openChangelog = which => {
+    if (clEl) return;
+    closeMenu();
+    const all = which === 'all';
+    const back = el('div', 'am-set-back am-cl-back', document.body);
+    const p = el('div', 'am-set am-cl', back);
+    p.setAttribute('role', 'dialog');
+    p.setAttribute('aria-label', "What's new in r1ytm");
+    const head = el('div', 'am-set-head', p);
+    el('div', 'am-set-logo', head).append(ytLogo());
+    const ht = el('div', 'am-set-htext', head);
+    el('div', 'am-set-title', ht).textContent = "What's new";
+    el('div', 'am-set-sub', ht).textContent = 'r1ytm ' + VERSION;
+    const x = el('button', 'am-set-x', head);
+    x.title = 'Close';
+    x.append(svg(P_CLOSE));
+    x.addEventListener('click', closeChangelog);
+
+    const list = el('div', 'am-cl-list', p);
+    const render = entries => {
+      list.replaceChildren();
+      for (const e of entries) {
+        const box = el('div', 'am-cl-ver', list);
+        const top = el('div', 'am-cl-top', box);
+        el('span', 'am-cl-v', top).textContent = e.v;
+        const next = cmpV(e.v, VERSION) > 0;
+        if (next || e.date) el('span', 'am-cl-date', top).textContent = next ? 'Next update' : e.date;
+        if (e.title) el('div', 'am-cl-title', box).textContent = e.title;
+        const ul = el('ul', 'am-cl-items', box);
+        for (const t of e.items) el('li', null, ul).textContent = t;
+      }
+    };
+    const shown = all ? CHANGELOG : which;
+    render(shown);
+    if (!all && shown.length < CHANGELOG.length) {
+      const more = ui.button(el('div', 'am-cl-more', p), 'Earlier versions', () => { render(CHANGELOG); more.parentNode.remove(); });
+    }
+
+    const opt = el('div', 'am-set-card am-cl-opt', p);
+    ui.toggle(opt, "Show what's new after an update", () => settings.whatsNew,
+      v => { settings.whatsNew = v; saveSettings(); });
+    const foot = el('div', 'am-set-foot', p);
+    const done = el('button', 'am-set-btn am-set-primary', foot);
+    done.textContent = 'Done';
+    done.addEventListener('click', closeChangelog);
+    done.style.marginLeft = 'auto';
+
+    back.addEventListener('click', e => { if (e.target === back) closeChangelog(); });
+    back.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if (e.key === 'Escape') closeChangelog();
+    });
+    clEl = back;
+    done.focus({ preventScroll: true });
+  };
+  window.amWhatsNew = () => openChangelog('all');
+
+  const clStyle = el('style', null, document.head);
+  clStyle.textContent = `
+    .am-cl-back { z-index: 100004; }
+    .am-set.am-cl { width: min(460px, 100%); display: flex; flex-direction: column; }
+    .am-cl-list { overflow-y: auto; min-height: 0; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
+    .am-cl-ver { padding: 12px 14px; border-radius: 14px; background: rgb(255 255 255 / .06); }
+    .am-cl-ver + .am-cl-ver { margin-top: 8px; }
+    .am-cl-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    .am-cl-v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .am-cl-date { font-size: 12px; color: rgb(255 255 255 / .45); font-variant-numeric: tabular-nums; }
+    .am-cl-title { font-size: 13.5px; font-weight: 600; margin-top: 4px; color: rgb(255 255 255 / .85); }
+    .am-cl-items { margin: 8px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.45; color: rgb(255 255 255 / .75); }
+    .am-cl-items li + li { margin-top: 4px; }
+    .am-cl-items li::marker { color: rgb(255 255 255 / .35); }
+    .am-cl-more { display: flex; justify-content: center; margin-top: 10px; }
+    .am-cl-opt { margin-top: 12px; }
+  `;
+
+  // after an update: the versions since the one last seen. Not on a new install, not over zen or the settings panel.
+  // A new install is told apart from an update by any r1ytm settings saved before (a user who never changed a setting
+  // looks like a new install, and sees the next update's list instead of this one).
+  const whatsNewCheck = () => {
+    const seen = store.get(SEEN_KEY, '');
+    if (seen && cmpV(seen, VERSION) >= 0) { if (seen !== VERSION) store.set(SEEN_KEY, VERSION); return; }
+    const before = store.get('am-settings', null) !== null || store.get('am-look', null) !== null;
+    const entries = !settings.whatsNew || (!seen && !before) ? [] : CHANGELOG.filter(e =>
+      cmpV(e.v, VERSION) <= 0 && (seen ? cmpV(e.v, seen) > 0 : e.v === VERSION));
+    if (!entries.length) { store.set(SEEN_KEY, VERSION); return; }
+    let tries = 0;
+    const show = () => {
+      // wait while something else covers the page or the tab is in the background (up to about 10 minutes)
+      if (zenEl || setEl || clEl || gmEl || document.hidden) { if (++tries < 300) setTimeout(show, 2000); return; }
+      store.set(SEEN_KEY, VERSION);
+      openChangelog(entries);
+    };
+    setTimeout(show, 1500);
+  };
+  whatsNewCheck();
+
+  const changelogOff = () => {
+    if (clEl) clEl.remove();
+    clEl = null;
+    clStyle.remove();
+  };
   /* ---------- sync loop ---------- */
   let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
   const timer = setInterval(() => {
@@ -4631,6 +4954,7 @@
       const src = m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : '';
       if (src && art.src !== src) art.src = src;
     }
+    { const v = video(); syncVinyl(idle ? '' : (m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : ''), !v || v.paused); }
 
     // mobile: YTM's own mini art is hidden while the player page is open, and fades back in after it closed
     const openNow = stateOpen();
@@ -4729,6 +5053,8 @@
     document.querySelectorAll('ytmusic-player').forEach(n => { n.style.removeProperty('--am-dx'); n.style.removeProperty('--am-dy'); });
     if (gmEl) gmEl.remove();
     zenOff();
+    vinylOff();
+    changelogOff();
     bgLayer.remove();
     restoreCleared();
     if (bgUrl) URL.revokeObjectURL(bgUrl);
