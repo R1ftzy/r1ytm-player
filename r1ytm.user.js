@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         r1ytm
 // @namespace    r1ytm
-// @version      1.9.1
+// @version      1.9.2
 // @description  A floating, Apple Music-style control bar for YouTube Music.
 // @match        https://music.youtube.com/*
 // @grant        none
@@ -14,14 +14,16 @@
 // Injected on https://music.youtube.com/* only.
 (() => {
   'use strict';
-  const VERSION = '1.9.1';
+  const VERSION = '1.9.2';
 
   /* ---------- settings ---------- */
   const PLAYER_PAGE_BAR_SPACE = '88px';          // space the player page keeps free for the bar until it's measured (follows the bar size)
   const ANIM_MS = 700;                           // player page open / background fade-out duration
   const FADE_IN_MS = 280;                        // how fast the page comes back after closing the player
   const ANIM_EASE = 'cubic-bezier(.16, 1, .3, 1)'; // expo-out: fast start, long soft landing
-  const SLIDE_FROM = '12vh';                     // how far below the player page starts its slide
+  const SLIDE_FROM = '12vh';                     // how far from the bar's side the player page starts its slide
+  const CLOSE_MS = 320;                          // player page close toward a top / left / right bar
+  const CLOSE_EASE = 'cubic-bezier(.4, 0, 1, 1)'; // ease-in: leaves gently, then goes
   const MINI_ART_FADE_MS = 450;                  // mobile: fade-in of YTM's own mini art after the player page closes
   const MINI_ART_DELAY_MS = 400;                 // ...starting this long after the page reports closed
   const VINYL_SPIN = [0, 40, 16, 1.8];           // vinyl: seconds per turn for the Spin choice (0 = still; 1.8 s = 33⅓ rpm)
@@ -218,9 +220,46 @@
 
   const setBgHidden = hidden => document.documentElement.classList.toggle('am-player-open', hidden);
 
+  // The player page slides in from the side the bar is on, and slides back out toward it. YTM's own slide is always
+  // from the bottom (a transform transition), so for the other sides it is switched off while our animation runs.
+  const slideFrom = () => posNow === 'top' ? `0 -${SLIDE_FROM}` : posNow === 'left' ? `-${SLIDE_FROM} 0`
+    : posNow === 'right' ? `${SLIDE_FROM} 0` : `0 ${SLIDE_FROM}`;
+  const ytmSlides = pp => {
+    const cs = getComputedStyle(pp);
+    return /\b(all|transform)\b/.test(cs.transitionProperty) && parseFloat(cs.transitionDuration) > 0;
+  };
+  let pageAnim = null;           // the open / close animation now running, if any
+  const animatePage = (pp, frames, opts, ownSlide) => {
+    if (pageAnim) pageAnim.cancel();
+    if (ownSlide) pp.style.setProperty('transition', 'none', 'important');   // YTM's slide jumps to its end
+    animatingUntil = performance.now() + opts.duration + 100;
+    document.documentElement.classList.add('am-animating');
+    pp.style.willChange = 'opacity, translate, scale';
+    const anim = pageAnim = pp.animate(frames, opts);
+    const done = () => {
+      if (pageAnim !== anim) return;                       // a newer animation took over
+      pageAnim = null;
+      pp.style.willChange = '';
+      pp.style.removeProperty('transition');
+      document.documentElement.classList.remove('am-animating');
+    };
+    anim.finished.then(done, done);
+  };
+  // close toward a bar that is not at the bottom (at the bottom, YTM's own slide down does it). The page's transform is
+  // held at its open value and stays visible until the end, whatever YTM sets meanwhile.
+  const animateClose = () => {
+    const pp = playerPage();
+    if (!pp || reduceMotion.matches || posNow === 'bottom' || !ytmSlides(pp)) return;
+    const hold = { transform: 'none', visibility: 'visible' };
+    animatePage(pp, [{ ...hold, opacity: 1, translate: '0 0', scale: '1' },
+      { ...hold, opacity: 0, translate: slideFrom(), scale: '0.97' }],
+      { duration: CLOSE_MS, easing: CLOSE_EASE }, true);
+  };
+
   // called the moment a close is requested, so the page fades back in while the player slides away
   const beginClose = () => {
     closingUntil = performance.now() + 2500;
+    if (lastOpen) animateClose();
     lastOpen = false;
     setBgHidden(false);
   };
@@ -235,28 +274,21 @@
 
     setBgHidden(open);
 
-    if (firstRun || !open || reduceMotion.matches) return;
+    if (firstRun || reduceMotion.matches) return;
+    if (!open) { animateClose(); return; }                  // closed by YTM itself (its own button, a key)
     const pp = playerPage();
     if (!pp) return;
 
-    // if YTM already slides the page with a transform transition, only add fade + slight scale
-    const cs = getComputedStyle(pp);
-    const ytmSlides = /\b(all|transform)\b/.test(cs.transitionProperty) && parseFloat(cs.transitionDuration) > 0;
-
+    // YTM already slides the page up with a transform transition: at the bottom, only add fade + slight scale.
+    // Elsewhere its slide is switched off and ours comes from the bar's side.
+    const theirs = ytmSlides(pp);
+    const keep = theirs && posNow === 'bottom';
     // prep layers, pause heavy work, then animate only compositor-friendly properties
-    animatingUntil = performance.now() + ANIM_MS + 100;
-    document.documentElement.classList.add('am-animating');
-    pp.style.willChange = 'opacity, translate, scale';
-    const anim = pp.animate(
-      ytmSlides
+    animatePage(pp,
+      keep
         ? [{ opacity: 0, scale: '0.985' }, { opacity: 1, scale: '1' }]
-        : [{ opacity: 0, translate: `0 ${SLIDE_FROM}`, scale: '0.97' }, { opacity: 1, translate: '0 0', scale: '1' }],
-      { duration: ANIM_MS, easing: ANIM_EASE }
-    );
-    anim.finished.finally(() => {
-      pp.style.willChange = '';
-      document.documentElement.classList.remove('am-animating');
-    });
+        : [{ opacity: 0, translate: slideFrom(), scale: '0.97' }, { opacity: 1, translate: '0 0', scale: '1' }],
+      { duration: ANIM_MS, easing: ANIM_EASE }, theirs && !keep);
   };
 
   const watchPage = () => {
@@ -4752,6 +4784,9 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.2', date: '2026-11-11', items: [
+      'The player page slides in from the side the bar is on (top, left or right), and slides back toward it when it closes',
+    ] },
     { v: '1.9.1', date: '2026-11-11', title: 'A Misc category, a vinyl to try and this list', items: [
       "What's new: this popup. It shows once after each update; turn it off under Misc",
       'Misc: one category at the end of the settings for the YouTube Music header, updates and experimental features',

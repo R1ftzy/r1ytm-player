@@ -8,9 +8,46 @@
 
   const setBgHidden = hidden => document.documentElement.classList.toggle('am-player-open', hidden);
 
+  // The player page slides in from the side the bar is on, and slides back out toward it. YTM's own slide is always
+  // from the bottom (a transform transition), so for the other sides it is switched off while our animation runs.
+  const slideFrom = () => posNow === 'top' ? `0 -${SLIDE_FROM}` : posNow === 'left' ? `-${SLIDE_FROM} 0`
+    : posNow === 'right' ? `${SLIDE_FROM} 0` : `0 ${SLIDE_FROM}`;
+  const ytmSlides = pp => {
+    const cs = getComputedStyle(pp);
+    return /\b(all|transform)\b/.test(cs.transitionProperty) && parseFloat(cs.transitionDuration) > 0;
+  };
+  let pageAnim = null;           // the open / close animation now running, if any
+  const animatePage = (pp, frames, opts, ownSlide) => {
+    if (pageAnim) pageAnim.cancel();
+    if (ownSlide) pp.style.setProperty('transition', 'none', 'important');   // YTM's slide jumps to its end
+    animatingUntil = performance.now() + opts.duration + 100;
+    document.documentElement.classList.add('am-animating');
+    pp.style.willChange = 'opacity, translate, scale';
+    const anim = pageAnim = pp.animate(frames, opts);
+    const done = () => {
+      if (pageAnim !== anim) return;                       // a newer animation took over
+      pageAnim = null;
+      pp.style.willChange = '';
+      pp.style.removeProperty('transition');
+      document.documentElement.classList.remove('am-animating');
+    };
+    anim.finished.then(done, done);
+  };
+  // close toward a bar that is not at the bottom (at the bottom, YTM's own slide down does it). The page's transform is
+  // held at its open value and stays visible until the end, whatever YTM sets meanwhile.
+  const animateClose = () => {
+    const pp = playerPage();
+    if (!pp || reduceMotion.matches || posNow === 'bottom' || !ytmSlides(pp)) return;
+    const hold = { transform: 'none', visibility: 'visible' };
+    animatePage(pp, [{ ...hold, opacity: 1, translate: '0 0', scale: '1' },
+      { ...hold, opacity: 0, translate: slideFrom(), scale: '0.97' }],
+      { duration: CLOSE_MS, easing: CLOSE_EASE }, true);
+  };
+
   // called the moment a close is requested, so the page fades back in while the player slides away
   const beginClose = () => {
     closingUntil = performance.now() + 2500;
+    if (lastOpen) animateClose();
     lastOpen = false;
     setBgHidden(false);
   };
@@ -25,28 +62,21 @@
 
     setBgHidden(open);
 
-    if (firstRun || !open || reduceMotion.matches) return;
+    if (firstRun || reduceMotion.matches) return;
+    if (!open) { animateClose(); return; }                  // closed by YTM itself (its own button, a key)
     const pp = playerPage();
     if (!pp) return;
 
-    // if YTM already slides the page with a transform transition, only add fade + slight scale
-    const cs = getComputedStyle(pp);
-    const ytmSlides = /\b(all|transform)\b/.test(cs.transitionProperty) && parseFloat(cs.transitionDuration) > 0;
-
+    // YTM already slides the page up with a transform transition: at the bottom, only add fade + slight scale.
+    // Elsewhere its slide is switched off and ours comes from the bar's side.
+    const theirs = ytmSlides(pp);
+    const keep = theirs && posNow === 'bottom';
     // prep layers, pause heavy work, then animate only compositor-friendly properties
-    animatingUntil = performance.now() + ANIM_MS + 100;
-    document.documentElement.classList.add('am-animating');
-    pp.style.willChange = 'opacity, translate, scale';
-    const anim = pp.animate(
-      ytmSlides
+    animatePage(pp,
+      keep
         ? [{ opacity: 0, scale: '0.985' }, { opacity: 1, scale: '1' }]
-        : [{ opacity: 0, translate: `0 ${SLIDE_FROM}`, scale: '0.97' }, { opacity: 1, translate: '0 0', scale: '1' }],
-      { duration: ANIM_MS, easing: ANIM_EASE }
-    );
-    anim.finished.finally(() => {
-      pp.style.willChange = '';
-      document.documentElement.classList.remove('am-animating');
-    });
+        : [{ opacity: 0, translate: slideFrom(), scale: '0.97' }, { opacity: 1, translate: '0 0', scale: '1' }],
+      { duration: ANIM_MS, easing: ANIM_EASE }, theirs && !keep);
   };
 
   const watchPage = () => {

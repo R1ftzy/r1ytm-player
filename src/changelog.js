@@ -5,6 +5,9 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.2', date: '2026-11-11', items: [
+      'The player page slides in from the side the bar is on (top, left or right), and slides back toward it when it closes',
+    ] },
     { v: '1.9.1', date: '2026-11-11', title: 'A Misc category, a vinyl to try and this list', items: [
       "What's new: this popup. It shows once after each update; turn it off under Misc",
       'Misc: one category at the end of the settings for the YouTube Music header, updates and experimental features',
