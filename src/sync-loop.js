@@ -1,6 +1,7 @@
   /* ---------- sync loop ---------- */
   let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
   const timer = setInterval(() => {
+    syncSpeed();                                          // also in zen: the speed stays what it is set to
     if (zenEl) return;                                    // zen covers everything: nothing here is visible, save the work
     // the settings panel covers the page: the page checks below (they measure the page, which is slow) wait, so the
     // panel stays smooth. The bar keeps updating, it is the live preview for the bar settings.
@@ -58,10 +59,11 @@
 
     const v = video();
     if (v) {
-      if (seeking === null) fill.style.width = (v.duration ? (v.currentTime / v.duration) * 100 : 0) + '%';
-      if (formNow === 'rail') { drawRing(); setProgress(v.duration ? (v.currentTime / v.duration) * 100 : 0); }
+      const st = songTime(), pct = st ? (st.cur / st.dur) * 100 : 0;
+      if (seeking === null) fill.style.width = pct + '%';
+      if (formNow === 'rail') { drawRing(); setProgress(pct); }
       if (formNow === 'classic' || formNow === 'rail') {
-        const tt = mmss(v.currentTime) + ' / ' + mmss(v.duration);
+        const tt = st ? mmss(st.cur) + ' / ' + mmss(st.dur) : '0:00 / 0:00';
         if (timeEl.textContent !== tt) timeEl.textContent = tt;
       }
       if (v.paused !== wasPaused) {
@@ -76,6 +78,7 @@
       }
     }
     if (document.activeElement !== volRange) volRange.value = String(getVolume());
+    showVolPct();
 
     const lk = ytLike();
     const liked = isLiked(lk);

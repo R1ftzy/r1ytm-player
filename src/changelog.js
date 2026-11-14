@@ -5,6 +5,12 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.3', date: '2026-11-12', title: 'Speed, volume and a settings backup', items: [
+      'Possibly fixed: the progress bar and the time sometimes counted the songs before this one, after a new song started. If it still happens, please report it on GitHub: github.com/R1ftzy/r1ytm-player/issues',
+      'Speed: 0.5× to 2× in Playback settings or in the 3-dot menu. Turn off Keep pitch for a nightcore / slowed sound. The 3-dot button shows the speed while it is not 1×',
+      'The volume shows in % next to its slider. Scroll on the volume button to change it',
+      'Misc > Backup: export every setting (with your font and background) to a file, and import it on another browser',
+    ] },
     { v: '1.9.2', date: '2026-11-11', items: [
       'The player page slides in from the side the bar is on (top, left or right), and slides back toward it when it closes',
     ] },

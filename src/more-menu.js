@@ -18,6 +18,7 @@
     dismissQueue: [18, 'M15.97 11.47a.75.75 0 111.06 1.06l-1.345 1.345 1.345 1.345a.75.75 0 11-1.06 1.06l-1.345-1.345-1.345 1.345a.75.75 0 11-1.06-1.06l1.345-1.345-1.345-1.345a.75.75 0 111.06-1.06l1.345 1.345 1.345-1.345Zm-5.47 2.78H3a.75.75 0 010-1.5h7.5v1.5Zm4.5-6a.75.75 0 010 1.5H3a.75.75 0 010-1.5h12Zm0-4.5a.75.75 0 010 1.5H3a.75.75 0 010-1.5h12Z'],
     report: [18, 'm3 2.25-.11.055c-.392.196-.64.597-.64 1.036v12.41a.75.75 0 101.5 0v-4.87a5.451 5.451 0 014.687.087L9 11.25l.357.166A6.701 6.701 0 0015 11.25l.11-.055c.343-.171.575-.5.628-.873l.012-.163V3.344a.908.908 0 00-1.313-.812 5.45 5.45 0 01-4.874 0L9 2.25a6.7 6.7 0 00-6 0Zm5.33 1.342.564.282a6.95 6.95 0 005.356.356v5.715a5.2 5.2 0 01-4.58-.037l-.564-.282A6.95 6.95 0 003.75 9.27V3.555a5.2 5.2 0 014.58.037Z'],
     stats: [18, 'M15.153 1.508 15 1.5H3A1.5 1.5 0 001.5 3v12l.008.153A1.5 1.5 0 003 16.5h12l.153-.008a1.5 1.5 0 001.34-1.339L16.5 15V3a1.5 1.5 0 00-1.347-1.492ZM3 15V3h12v12H3Zm6-9.75a.75.75 0 00-.75.75v6.75h1.5V6A.75.75 0 009 5.25ZM6 7.5a.75.75 0 00-.75.75v4.5h1.5v-4.5A.75.75 0 006 7.5ZM12 9a.75.75 0 00-.75.75v3h1.5v-3A.75.75 0 0012 9Z'],
+    speed: [24, 'M20.38 8.57l-1.23 1.85a8 8 0 01-.22 7.58H5.07A8 8 0 0115.58 6.85l1.85-1.23A10 10 0 003.35 19a2 2 0 001.72 1h13.85a2 2 0 001.74-1 10 10 0 00-.27-10.44zm-9.79 6.84a2 2 0 002.83 0l5.66-8.49-8.49 5.66a2 2 0 000 2.83z'],
   };
   const menuIcon = ([size, d]) => {
     const s = svg(d);
@@ -105,6 +106,34 @@
 
   // tiles = quick actions on top; groups are separated by a line; the last group is shown quieter.
   // `re` items run YTM's own menu item with a matching label (and take over its wording, e.g. "Remove from library").
+  // the speed row: − value + inside the row; the menu stays open. A click on the value goes back to 1×; a click
+  // elsewhere on the row (or Enter) steps up and wraps around after 2×
+  const SPEED_STEPS = [50, 75, 100, 125, 150, 175, 200];
+  const speedItem = () => {
+    const it = { icon: 'speed', label: 'Speed', keep: true };
+    it.extra = b => {
+      const box = el('span', 'am-menu-speed', b);
+      const minus = el('span', 'am-menu-sbtn', box);
+      minus.textContent = '−'; minus.dataset.d = '-1'; minus.title = 'Slower';
+      const val = el('span', 'am-menu-sval', box);
+      val.dataset.d = '0'; val.title = 'Normal speed';
+      const plus = el('span', 'am-menu-sbtn', box);
+      plus.textContent = '+'; plus.dataset.d = '1'; plus.title = 'Faster';
+      it.show = () => { val.textContent = fmtSpeed(settings.speed / 100); b.classList.toggle('am-on', settings.speed !== 100); };
+      it.show();
+    };
+    it.run = e => {
+      const t = e && e.target && e.target.closest ? e.target.closest('[data-d]') : null;
+      const d = t ? +t.dataset.d : 1, s = settings.speed;
+      let n;
+      if (d === 0) n = 100;
+      else if (d > 0) { n = SPEED_STEPS.find(x => x > s); if (n === undefined) n = t ? 200 : SPEED_STEPS[0]; }
+      else { n = [...SPEED_STEPS].reverse().find(x => x < s); if (n === undefined) n = SPEED_STEPS[0]; }
+      setSpeed(n);
+      if (it.show) it.show();
+    };
+    return it;
+  };
   const menuModel = () => {
     const liked = isLiked(ytLike());
     const item = (icon, label, run) => run instanceof RegExp
@@ -129,6 +158,9 @@
           item('like', liked ? 'Remove from liked songs' : 'Add to liked songs', () => likeBtn.click()),
           item('download', 'Download', /download/i),
           item('pin', 'Pin to Listen again', /listen again/i),
+        ],
+        [
+          speedItem(),
         ],
         [
           item('removeQueue', 'Remove from queue', /remove from queue/i),
@@ -171,9 +203,10 @@
     setTimeout(() => m.remove(), 160);
   };
 
-  const pickMenuItem = it => {
-    closeMenu();
-    it.run();
+  // an item with keep (the speed row) runs with the menu still open; it gets the click to see which part was hit
+  const pickMenuItem = (it, e) => {
+    if (!it.keep) closeMenu();
+    it.run(e);
   };
 
   // build and show a popup: model = { tiles, groups }, head = { title, sub, img } or null,
@@ -200,6 +233,7 @@
       el('span', 'am-menu-ic', b).append(it.svg ? it.svg.cloneNode(true) : menuIcon(MI[it.icon]));
       it.labelEl = el('span', 'am-menu-label', b);
       it.labelEl.textContent = it.label;
+      if (it.extra) it.extra(b);
       it.el = b;
       menuItemOf.set(b, it);
       all.push(it);

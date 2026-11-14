@@ -51,8 +51,7 @@
   };
   track.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
-    const v = video();
-    if (!v || !v.duration) return;
+    if (!songTime()) return;
     e.stopPropagation();
     track.setPointerCapture(e.pointerId);
     track.classList.add('am-drag');
@@ -66,8 +65,8 @@
   });
   const endSeek = commit => {
     if (seeking === null) return;
-    const v = video();
-    if (commit && v && v.duration) v.currentTime = seeking * v.duration;
+    const st = songTime();
+    if (commit && st) seekSong(seeking * st.dur);
     seeking = null;
     track.classList.remove('am-drag');
   };

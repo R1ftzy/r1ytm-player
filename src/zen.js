@@ -391,9 +391,10 @@
     const set = (a, f) => { try { navigator.mediaSession.setActionHandler(a, f); } catch {} };
     set('nexttrack', clickYt('Next'));
     set('previoustrack', clickYt('Previous'));
-    set('seekto', d => { const v = video(); if (v && d && Number.isFinite(d.seekTime)) v.currentTime = d.seekTime; });
-    set('seekbackward', d => { const v = video(); if (v) v.currentTime = Math.max(0, v.currentTime - ((d && d.seekOffset) || 10)); });
-    set('seekforward', d => { const v = video(); if (v) v.currentTime += (d && d.seekOffset) || 10; });
+    // the OS gives song times; seekSong() keeps them right when the video counts from an earlier song
+    set('seekto', d => { if (d && Number.isFinite(d.seekTime)) seekSong(d.seekTime); });
+    set('seekbackward', d => { const st = songTime(); if (st) seekSong(st.cur - ((d && d.seekOffset) || 10)); });
+    set('seekforward', d => { const st = songTime(); if (st) seekSong(st.cur + ((d && d.seekOffset) || 10)); });
   };
 
   /* the album. YTM often leaves the media session's album empty, so it is looked up in YTM's own data for the song
@@ -554,8 +555,10 @@
     lyr.sig = sig;
     if (!sig) return null;
     if (lyr.staleSig !== null) { if (sig === lyr.staleSig) return null; lyr.staleSig = null; }
-    if (v.duration && +last.dataset.time > v.duration + 1) return null;      // can't be this song's
-    const t = v.currentTime + LYRIC_LEAD;
+    const st = songTime();
+    if (!st) return null;
+    if (+last.dataset.time > st.dur + 1) return null;      // can't be this song's
+    const t = st.cur + LYRIC_LEAD;
     let i = -1;
     for (let k = 0; k < lines.length && +lines[k].dataset.time <= t; k++) i = k;
     const nl = lines[i + 1], next = nl ? +nl.dataset.time : 0, nextText = nl ? lyricText(nl) : '';
@@ -604,11 +607,12 @@
     clearTimeout(zenTick);
     if (zenMode !== 'on') return;
     const v = video();
-    const nearEnd = SLEEP_STEPS[sleepIdx] === 'end' && v && v.duration && v.duration - v.currentTime < 2;
+    const st = songTime();
+    const nearEnd = SLEEP_STEPS[sleepIdx] === 'end' && st && st.dur - st.cur < 2;
     let wait = nearEnd ? 250 : 1000 - Date.now() % 1000 + 5;
     // a lyric line: wake right when the next one starts (not more often than that)
-    if (zenUi.lyricNext && v && !v.paused && !document.hidden) {
-      const ms = (zenUi.lyricNext - LYRIC_LEAD - v.currentTime) / (v.playbackRate || 1) * 1000 + 15;
+    if (zenUi.lyricNext && v && st && !v.paused && !document.hidden) {
+      const ms = (zenUi.lyricNext - LYRIC_LEAD - st.cur) / (v.playbackRate || 1) * 1000 + 15;
       if (ms > 0) wait = Math.min(wait, Math.max(40, ms));
     }
     zenTick = setTimeout(() => { zenUpdate(); zenSchedule(); }, wait);
@@ -671,11 +675,11 @@
     }
 
     // sleep timer
-    const st = SLEEP_STEPS[sleepIdx];
+    const st = SLEEP_STEPS[sleepIdx], song = st === 'end' ? songTime() : null;
     if (st === 'end' && v) {
       const changed = sleepTitle && t && t !== sleepTitle;
       if (changed && sleepSkip) { sleepTitle = t; sleepSkip = false; }
-      else if (changed || (v.duration && v.currentTime >= v.duration - .6)) { v.pause(); sleepIdx = 0; }
+      else if (changed || (song && song.cur >= song.dur - .6)) { v.pause(); sleepIdx = 0; }
     } else if (sleepAt && now >= sleepAt) {
       if (v && !v.paused) v.pause();
       sleepIdx = 0; sleepAt = 0;

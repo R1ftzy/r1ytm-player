@@ -118,7 +118,7 @@
         if (type === 'pointerdown' || type === 'mousedown') e.preventDefault();
         if (type === 'click') {
           const b = e.target.closest('.am-menu-item');
-          if (b && menuItemOf.has(b) && !b.classList.contains('am-menu-off')) pickMenuItem(menuItemOf.get(b));
+          if (b && menuItemOf.has(b) && !b.classList.contains('am-menu-off')) pickMenuItem(menuItemOf.get(b), e);
         }
         return;
       }

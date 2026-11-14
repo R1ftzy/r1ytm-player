@@ -66,12 +66,43 @@
   volRange.min = '0';
   volRange.max = '100';
   volRange.value = String(getVolume());
-  volRange.addEventListener('input', () => setVolume(+volRange.value));
+  volRange.addEventListener('input', () => { setVolume(+volRange.value); showVolPct(); });
   volRange.addEventListener('click', e => e.stopPropagation());
+  // the volume in %, shown with the slider (between the slider and the button)
+  const volPct = el('span', 'am-vol-pct', volWrap);
+  const showVolPct = () => {
+    const v = video(), t = v && v.muted ? 'Muted' : getVolume() + '%';
+    if (volPct.textContent !== t) volPct.textContent = t;
+  };
   const volBtn = btn(volWrap, 'vol', () => {
     const v = video();
     if (v) v.muted = !v.muted;
+    showVolPct();
   });
+  /* scroll on the volume button or slider: 5% a step. A trackpad sends many small deltas, so they add up until they
+     make a whole step. The slider stays open for a moment after the last step, and the page doesn't scroll. */
+  let volAcc = 0, volShowT = 0;
+  volWrap.addEventListener('wheel', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    const d = (e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY) || -e.deltaX;
+    if (Math.sign(d) !== Math.sign(volAcc)) volAcc = 0;
+    volAcc += d;
+    const steps = Math.trunc(volAcc / 50);
+    if (steps) {
+      volAcc -= steps * 50;                                // keep the rest for the next step
+      const v = video();
+      if (v && v.muted && steps < 0) v.muted = false;     // scrolling up while muted: unmute first
+      const now = Math.round(getVolume() / 5) * 5;
+      const val = Math.max(0, Math.min(100, now - steps * 5));
+      setVolume(val);
+      volRange.value = String(val);
+    }
+    showVolPct();
+    volWrap.classList.add('am-vol-on');
+    clearTimeout(volShowT);
+    volShowT = setTimeout(() => volWrap.classList.remove('am-vol-on'), 1200);
+  }, { passive: false });
 
   /* bar layouts: full, compact (a centered pill) and classic (YouTube Music's own order: the song on the left, the
      transport in the middle, time / like / menu / volume on the right, the progress bar along the top edge).

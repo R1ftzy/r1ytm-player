@@ -136,6 +136,18 @@
     .am-menu-ic svg { width: calc(20px * var(--am-ms)) !important; height: calc(20px * var(--am-ms)) !important; display: block; fill: currentColor; }
     .am-menu-item:hover .am-menu-ic { color: #fff; }
     .am-menu-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    /* the speed row: − value + on the right of the row */
+    .am-menu-speed { display: flex; align-items: center; gap: 2px; margin-left: auto; padding-left: 8px; flex-shrink: 0; }
+    .am-menu-sbtn, .am-menu-sval { display: grid; place-items: center; height: calc(26px * var(--am-ms)); border-radius: 8px;
+      font-size: calc(13px * var(--am-ms)); font-variant-numeric: tabular-nums; transition: background .12s ease; }
+    .am-menu-sbtn { width: calc(26px * var(--am-ms)); font-size: calc(16px * var(--am-ms)); color: rgb(255 255 255 / .8); }
+    .am-menu-sval { min-width: calc(44px * var(--am-ms)); color: rgb(255 255 255 / .7); }
+    .am-menu-item.am-on .am-menu-sval { color: #fa586a; font-weight: 600; }
+    .am-menu-sbtn:hover, .am-menu-sval:hover { background: rgb(255 255 255 / .14); color: #fff; }
+    /* the 3-dot button shows the speed while it is not 1× */
+    .am-lcd-more[data-speed] { position: relative; overflow: visible; }
+    .am-lcd-more[data-speed]::after { content: attr(data-speed); position: absolute; right: -2px; top: -3px; padding: 1px 4px;
+      border-radius: 6px; font: 700 8.5px/1.3 system-ui, sans-serif; color: #fff; background: #fa586a; pointer-events: none; }
 
     .am-menu-tiles { display: grid; gap: 6px; padding: 2px 2px 6px; }
     .am-menu-tile { flex-direction: column; justify-content: center; gap: 6px; min-height: calc(64px * var(--am-ms)); padding: 8px 4px;
@@ -200,8 +212,13 @@
     .am-vol { display: flex; align-items: center; }
     .am-vol input { width: 0; opacity: 0; margin: 0; accent-color: #fff; cursor: pointer;
       transition: width .2s ease, opacity .2s ease, margin .2s ease; }
-    .am-vol:hover input, .am-vol:focus-within input { width: 90px; opacity: 1; margin-right: 6px; }
-    .am-compact .am-vol:hover input, .am-compact .am-vol:focus-within input { width: 70px; }
+    .am-vol:hover input, .am-vol:focus-within input, .am-vol.am-vol-on input { width: 90px; opacity: 1; margin-right: 6px; }
+    .am-compact .am-vol:hover input, .am-compact .am-vol:focus-within input, .am-compact .am-vol.am-vol-on input { width: 70px; }
+    /* the volume in %, between the slider and the button, shown with the slider */
+    .am-vol-pct { width: 0; opacity: 0; overflow: hidden; white-space: nowrap; text-align: right; flex-shrink: 0;
+      font-size: calc(11.5px * var(--am-s, 1)); font-variant-numeric: tabular-nums; color: rgb(255 255 255 / .7);
+      transition: width .2s ease, opacity .2s ease; }
+    .am-vol:is(:hover, :focus-within, .am-vol-on) .am-vol-pct { width: 3.3em; opacity: 1; }
 
     /* mobile / narrow: only art, names, progress and heart (no transport, volume, mode or menu buttons) */
     @media (max-width: 700px) {

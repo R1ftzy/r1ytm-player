@@ -37,6 +37,7 @@ const SECTIONS = [
   'zen',             // zen mode: locked, title-card listening screen
   'vinyl',           // player page art as a spinning record
   'changelog',       // "What's new" popup after an update
+  'backup',          // export / import every setting as one file
   'sync-loop',       // the interval that keeps everything in sync + teardown
 ];
 

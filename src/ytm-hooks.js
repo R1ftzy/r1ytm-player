@@ -10,6 +10,67 @@
   const CTRL = { PlayPause: '.play-pause-button', Next: '.next-button', Previous: '.previous-button', Repeat: '.repeat', Shuffle: '.shuffle' };
   const yt = name => q(`.ytmusicPlayerControls${name}Button button`) || q(`ytmusic-player-bar ${CTRL[name]}`) || q(CTRL[name]);
   const video = () => document.querySelector('video');
+  /* the time of the song playing now. The <video> element's own currentTime / duration can count from an earlier
+     song: YTM plays through MediaSource and can append the next song to the same stream (gapless), so the time and
+     the length then include the songs before it. YTM's player API (#movie_player) and its own progress slider are
+     per song, so they come first; the video element is the last fallback.
+     Returns { cur, dur } in seconds (dur > 0), or null when nothing is playing. */
+  const ytPlayer = () => {
+    const p = document.getElementById('movie_player');
+    return p && typeof p.getCurrentTime === 'function' && typeof p.getDuration === 'function' ? p : null;
+  };
+  const ytSlider = () => document.querySelector('ytmusic-player-bar #progress-bar');
+  const songTime = () => {
+    const p = ytPlayer();
+    if (p) {
+      try {
+        const cur = +p.getCurrentTime(), dur = +p.getDuration();
+        if (Number.isFinite(cur) && Number.isFinite(dur) && dur > 0) return { cur: Math.min(Math.max(0, cur), dur), dur };
+      } catch {}
+    }
+    const s = ytSlider();
+    if (s) {
+      const dur = +(s.max || s.getAttribute('aria-valuemax')), cur = +(s.value || s.getAttribute('aria-valuenow'));
+      if (Number.isFinite(cur) && Number.isFinite(dur) && dur > 0) return { cur: Math.min(Math.max(0, cur), dur), dur };
+    }
+    const v = video();
+    if (v && Number.isFinite(v.duration) && v.duration > 0) return { cur: v.currentTime, dur: v.duration };
+    return null;
+  };
+  // seek to a time (seconds) in the song playing now
+  const seekSong = t => {
+    const st = songTime();
+    if (!st) return;
+    t = Math.max(0, Math.min(st.dur, t));
+    const p = ytPlayer();
+    if (p && typeof p.seekTo === 'function') { try { p.seekTo(t, true); return; } catch {} }
+    const v = video();
+    if (v) v.currentTime = v.currentTime + (t - st.cur);      // keeps the offset if the video counts from an earlier song
+  };
+  // amTimeProbe(): log the time from each source at every song change (and 3 s later), to see which one goes wrong.
+  // Run it again to stop.
+  let timeProbe = 0;
+  window.amTimeProbe = () => {
+    if (timeProbe) { clearInterval(timeProbe); timeProbe = 0; console.log('[am-bar] time probe off'); return; }
+    let last = '', at = 0;
+    const dump = why => {
+      const v = video(), p = ytPlayer(), s = ytSlider();
+      let pc = null, pd = null;
+      try { if (p) { pc = p.getCurrentTime(); pd = p.getDuration(); } } catch {}
+      console.log(`[am-bar] time (${why}): "${last}"`, {
+        video: v ? { cur: v.currentTime, dur: v.duration, src: (v.src || '').slice(0, 40) } : null,
+        player: p ? { cur: pc, dur: pd } : null,
+        slider: s ? { cur: s.value, dur: s.max } : null,
+        used: songTime(),
+      });
+    };
+    timeProbe = setInterval(() => {
+      const m = navigator.mediaSession.metadata, t = m ? m.title : '';
+      if (t !== last) { last = t; at = performance.now(); dump('song change'); }
+      else if (at && performance.now() - at > 3000) { at = 0; dump('3 s later'); }
+    }, 250);
+    console.log('[am-bar] time probe on: play a few songs in a row. Run amTimeProbe() again to stop');
+  };
   const ytLinks = () => qa('.ytmusicTrackInfoByline a, .byline a');
   const ytLike = () =>
     q('like-button-view-model button') ||

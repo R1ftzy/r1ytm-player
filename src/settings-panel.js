@@ -29,6 +29,11 @@
       note: () => "Off: the bar fills the width and sits on the edge of the window, like YouTube Music's own" },
     { group: 'Bar & menus', sub: 'Size & position', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
       note: () => 'Grows when you point at it, easier to drag' },
+    // playback speed (syncSpeed below). Kept in % so the steps stay whole numbers; shown as 1.25×
+    { group: 'Playback', sub: 'Speed', key: 'speed', label: 'Speed', min: 50, max: 200, step: 5, def: 100, unit: '%',
+      fmt: v => fmtSpeed(v / 100) },
+    { group: 'Playback', sub: 'Speed', key: 'keepPitch', type: 'toggle', label: 'Keep pitch', min: 0, max: 1, def: 1,
+      note: () => 'Off: the pitch goes up and down with the speed (nightcore / slowed)' },
     // Misc, the last category of the panel (see LATE_GROUPS): YouTube Music's header, updates, experimental features.
     // Its cards show in this order (order of first appearance).
     { group: 'Misc', sub: 'Header', key: 'brand', type: 'toggle', label: 'R1ytm logo', min: 0, max: 1, def: 0,
@@ -38,6 +43,13 @@
       note: () => 'A short list of the changes, once per new version' },
     { group: 'Misc', sub: 'Updates', key: 'whatsNewOpen', type: 'action', label: "What's new", button: 'Open',
       min: 0, max: 0, def: 0, run: () => openChangelog('all'), note: () => 'Every version so far' },
+    // backup.js: one file with every setting, to move them to another browser or device
+    { group: 'Misc', sub: 'Backup', key: 'backupExport', type: 'action', label: 'Export settings', button: 'Export',
+      min: 0, max: 0, def: 0, run: (b, note) => exportSettings(note),
+      note: () => 'A file with every setting, the font and the background' },
+    { group: 'Misc', sub: 'Backup', key: 'backupImport', type: 'action', label: 'Import settings', button: 'Import',
+      min: 0, max: 0, def: 0, run: (b, note) => importSettings(note),
+      note: () => { const m = backupMsg; backupMsg = ''; return m || 'Replaces every setting with the ones in the file'; } },
     // vinyl.js
     { group: 'Misc', sub: 'Experimental', key: 'vinyl', type: 'toggle', label: 'Vinyl', min: 0, max: 1, def: 0,
       note: () => 'The art turns into a spinning record, centered on the left edge. Not in video mode or on phones' },
@@ -182,6 +194,31 @@
     return out;
   };
   const settings = loadSettings();
+  /* playback speed and pitch, on YTM's <video>. YTM can set the rate back to 1 (a new song, a new video element), so
+     the sync loop calls this every tick and sets it again. At 1× it lets go after setting 1 once, so it doesn't fight
+     anything else that changes the speed. The 3-dot button shows the speed while it is not 1×. */
+  const fmtSpeed = r => (Math.round(r * 100) / 100) + '×';
+  let speedSet = 1;                      // the rate last put on the video
+  const syncSpeed = () => {
+    const want = settings.speed / 100;
+    const v = video();
+    if (v && (want !== 1 || speedSet !== 1)) {
+      if (Math.abs(v.playbackRate - want) > .001) v.playbackRate = want;
+      const pp = want === 1 || !!settings.keepPitch;
+      if ('preservesPitch' in v && v.preservesPitch !== pp) v.preservesPitch = pp;
+      speedSet = want;
+    }
+    const badge = want === 1 ? null : fmtSpeed(want);
+    if (moreBtn.getAttribute('data-speed') !== badge) {
+      if (badge) moreBtn.setAttribute('data-speed', badge); else moreBtn.removeAttribute('data-speed');
+      moreBtn.title = badge ? 'More (speed ' + badge + ')' : '';
+    }
+  };
+  const setSpeed = pct => {
+    settings.speed = Math.max(50, Math.min(200, Math.round(pct / 5) * 5));
+    saveSettings();
+    syncSpeed();
+  };
   /* speed: the values go in one small style sheet, each only on the elements that use it (s.scope), not on <html>.
      A custom property set on <html> is inherited by every element of YTM's very big page, so every change (each step
      of a slider) made the browser restyle all of it. The sheet is only rewritten when a value really changed. */
@@ -195,6 +232,7 @@
     }
     const css = [...by].map(([sel, decl]) => `${sel} { ${decl}}`).join('\n');
     if (setVars.textContent !== css) setVars.textContent = css;
+    syncSpeed();
     document.documentElement.classList.toggle('am-easy-track', !!settings.easyTrack);
     document.documentElement.classList.toggle('am-dock', !settings.barFloat);
     applyRefraction();
@@ -280,10 +318,11 @@
         const row = el('div', 'am-set-row am-set-inline', section);
         const lt = el('div', 'am-set-ltext', row);
         el('div', 'am-set-label', lt).textContent = s.label;
-        if (s.note) el('div', 'am-set-note', lt).textContent = s.note();
+        const note = el('div', 'am-set-note', lt);          // run() can write a result here
+        if (s.note) note.textContent = s.note();
         const b = el('button', 'am-set-btn am-set-soft', row);
         b.textContent = s.button;
-        b.addEventListener('click', () => s.run());
+        b.addEventListener('click', () => s.run(b, note));
         return;
       }
       if (s.type === 'toggle') {
@@ -322,7 +361,7 @@
       Object.assign(r, { type: 'range', min: s.min, max: s.max, step: s.step });
       const show = () => {
         r.value = String(settings[s.key]);
-        val.textContent = settings[s.key] + s.unit;
+        val.textContent = s.fmt ? s.fmt(settings[s.key]) : settings[s.key] + s.unit;
         r.style.setProperty('--p', ((settings[s.key] - s.min) / (s.max - s.min) * 100) + '%');
       };
       // while dragging: the number follows at once, the look once per frame; saved when let go

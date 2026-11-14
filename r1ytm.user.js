@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         r1ytm
 // @namespace    r1ytm
-// @version      1.9.2
+// @version      1.9.3
 // @description  A floating, Apple Music-style control bar for YouTube Music.
 // @match        https://music.youtube.com/*
 // @grant        none
@@ -14,7 +14,7 @@
 // Injected on https://music.youtube.com/* only.
 (() => {
   'use strict';
-  const VERSION = '1.9.2';
+  const VERSION = '1.9.3';
 
   /* ---------- settings ---------- */
   const PLAYER_PAGE_BAR_SPACE = '88px';          // space the player page keeps free for the bar until it's measured (follows the bar size)
@@ -93,6 +93,67 @@
   const CTRL = { PlayPause: '.play-pause-button', Next: '.next-button', Previous: '.previous-button', Repeat: '.repeat', Shuffle: '.shuffle' };
   const yt = name => q(`.ytmusicPlayerControls${name}Button button`) || q(`ytmusic-player-bar ${CTRL[name]}`) || q(CTRL[name]);
   const video = () => document.querySelector('video');
+  /* the time of the song playing now. The <video> element's own currentTime / duration can count from an earlier
+     song: YTM plays through MediaSource and can append the next song to the same stream (gapless), so the time and
+     the length then include the songs before it. YTM's player API (#movie_player) and its own progress slider are
+     per song, so they come first; the video element is the last fallback.
+     Returns { cur, dur } in seconds (dur > 0), or null when nothing is playing. */
+  const ytPlayer = () => {
+    const p = document.getElementById('movie_player');
+    return p && typeof p.getCurrentTime === 'function' && typeof p.getDuration === 'function' ? p : null;
+  };
+  const ytSlider = () => document.querySelector('ytmusic-player-bar #progress-bar');
+  const songTime = () => {
+    const p = ytPlayer();
+    if (p) {
+      try {
+        const cur = +p.getCurrentTime(), dur = +p.getDuration();
+        if (Number.isFinite(cur) && Number.isFinite(dur) && dur > 0) return { cur: Math.min(Math.max(0, cur), dur), dur };
+      } catch {}
+    }
+    const s = ytSlider();
+    if (s) {
+      const dur = +(s.max || s.getAttribute('aria-valuemax')), cur = +(s.value || s.getAttribute('aria-valuenow'));
+      if (Number.isFinite(cur) && Number.isFinite(dur) && dur > 0) return { cur: Math.min(Math.max(0, cur), dur), dur };
+    }
+    const v = video();
+    if (v && Number.isFinite(v.duration) && v.duration > 0) return { cur: v.currentTime, dur: v.duration };
+    return null;
+  };
+  // seek to a time (seconds) in the song playing now
+  const seekSong = t => {
+    const st = songTime();
+    if (!st) return;
+    t = Math.max(0, Math.min(st.dur, t));
+    const p = ytPlayer();
+    if (p && typeof p.seekTo === 'function') { try { p.seekTo(t, true); return; } catch {} }
+    const v = video();
+    if (v) v.currentTime = v.currentTime + (t - st.cur);      // keeps the offset if the video counts from an earlier song
+  };
+  // amTimeProbe(): log the time from each source at every song change (and 3 s later), to see which one goes wrong.
+  // Run it again to stop.
+  let timeProbe = 0;
+  window.amTimeProbe = () => {
+    if (timeProbe) { clearInterval(timeProbe); timeProbe = 0; console.log('[am-bar] time probe off'); return; }
+    let last = '', at = 0;
+    const dump = why => {
+      const v = video(), p = ytPlayer(), s = ytSlider();
+      let pc = null, pd = null;
+      try { if (p) { pc = p.getCurrentTime(); pd = p.getDuration(); } } catch {}
+      console.log(`[am-bar] time (${why}): "${last}"`, {
+        video: v ? { cur: v.currentTime, dur: v.duration, src: (v.src || '').slice(0, 40) } : null,
+        player: p ? { cur: pc, dur: pd } : null,
+        slider: s ? { cur: s.value, dur: s.max } : null,
+        used: songTime(),
+      });
+    };
+    timeProbe = setInterval(() => {
+      const m = navigator.mediaSession.metadata, t = m ? m.title : '';
+      if (t !== last) { last = t; at = performance.now(); dump('song change'); }
+      else if (at && performance.now() - at > 3000) { at = 0; dump('3 s later'); }
+    }, 250);
+    console.log('[am-bar] time probe on: play a few songs in a row. Run amTimeProbe() again to stop');
+  };
   const ytLinks = () => qa('.ytmusicTrackInfoByline a, .byline a');
   const ytLike = () =>
     q('like-button-view-model button') ||
@@ -416,6 +477,7 @@
     dismissQueue: [18, 'M15.97 11.47a.75.75 0 111.06 1.06l-1.345 1.345 1.345 1.345a.75.75 0 11-1.06 1.06l-1.345-1.345-1.345 1.345a.75.75 0 11-1.06-1.06l1.345-1.345-1.345-1.345a.75.75 0 111.06-1.06l1.345 1.345 1.345-1.345Zm-5.47 2.78H3a.75.75 0 010-1.5h7.5v1.5Zm4.5-6a.75.75 0 010 1.5H3a.75.75 0 010-1.5h12Zm0-4.5a.75.75 0 010 1.5H3a.75.75 0 010-1.5h12Z'],
     report: [18, 'm3 2.25-.11.055c-.392.196-.64.597-.64 1.036v12.41a.75.75 0 101.5 0v-4.87a5.451 5.451 0 014.687.087L9 11.25l.357.166A6.701 6.701 0 0015 11.25l.11-.055c.343-.171.575-.5.628-.873l.012-.163V3.344a.908.908 0 00-1.313-.812 5.45 5.45 0 01-4.874 0L9 2.25a6.7 6.7 0 00-6 0Zm5.33 1.342.564.282a6.95 6.95 0 005.356.356v5.715a5.2 5.2 0 01-4.58-.037l-.564-.282A6.95 6.95 0 003.75 9.27V3.555a5.2 5.2 0 014.58.037Z'],
     stats: [18, 'M15.153 1.508 15 1.5H3A1.5 1.5 0 001.5 3v12l.008.153A1.5 1.5 0 003 16.5h12l.153-.008a1.5 1.5 0 001.34-1.339L16.5 15V3a1.5 1.5 0 00-1.347-1.492ZM3 15V3h12v12H3Zm6-9.75a.75.75 0 00-.75.75v6.75h1.5V6A.75.75 0 009 5.25ZM6 7.5a.75.75 0 00-.75.75v4.5h1.5v-4.5A.75.75 0 006 7.5ZM12 9a.75.75 0 00-.75.75v3h1.5v-3A.75.75 0 0012 9Z'],
+    speed: [24, 'M20.38 8.57l-1.23 1.85a8 8 0 01-.22 7.58H5.07A8 8 0 0115.58 6.85l1.85-1.23A10 10 0 003.35 19a2 2 0 001.72 1h13.85a2 2 0 001.74-1 10 10 0 00-.27-10.44zm-9.79 6.84a2 2 0 002.83 0l5.66-8.49-8.49 5.66a2 2 0 000 2.83z'],
   };
   const menuIcon = ([size, d]) => {
     const s = svg(d);
@@ -503,6 +565,34 @@
 
   // tiles = quick actions on top; groups are separated by a line; the last group is shown quieter.
   // `re` items run YTM's own menu item with a matching label (and take over its wording, e.g. "Remove from library").
+  // the speed row: − value + inside the row; the menu stays open. A click on the value goes back to 1×; a click
+  // elsewhere on the row (or Enter) steps up and wraps around after 2×
+  const SPEED_STEPS = [50, 75, 100, 125, 150, 175, 200];
+  const speedItem = () => {
+    const it = { icon: 'speed', label: 'Speed', keep: true };
+    it.extra = b => {
+      const box = el('span', 'am-menu-speed', b);
+      const minus = el('span', 'am-menu-sbtn', box);
+      minus.textContent = '−'; minus.dataset.d = '-1'; minus.title = 'Slower';
+      const val = el('span', 'am-menu-sval', box);
+      val.dataset.d = '0'; val.title = 'Normal speed';
+      const plus = el('span', 'am-menu-sbtn', box);
+      plus.textContent = '+'; plus.dataset.d = '1'; plus.title = 'Faster';
+      it.show = () => { val.textContent = fmtSpeed(settings.speed / 100); b.classList.toggle('am-on', settings.speed !== 100); };
+      it.show();
+    };
+    it.run = e => {
+      const t = e && e.target && e.target.closest ? e.target.closest('[data-d]') : null;
+      const d = t ? +t.dataset.d : 1, s = settings.speed;
+      let n;
+      if (d === 0) n = 100;
+      else if (d > 0) { n = SPEED_STEPS.find(x => x > s); if (n === undefined) n = t ? 200 : SPEED_STEPS[0]; }
+      else { n = [...SPEED_STEPS].reverse().find(x => x < s); if (n === undefined) n = SPEED_STEPS[0]; }
+      setSpeed(n);
+      if (it.show) it.show();
+    };
+    return it;
+  };
   const menuModel = () => {
     const liked = isLiked(ytLike());
     const item = (icon, label, run) => run instanceof RegExp
@@ -527,6 +617,9 @@
           item('like', liked ? 'Remove from liked songs' : 'Add to liked songs', () => likeBtn.click()),
           item('download', 'Download', /download/i),
           item('pin', 'Pin to Listen again', /listen again/i),
+        ],
+        [
+          speedItem(),
         ],
         [
           item('removeQueue', 'Remove from queue', /remove from queue/i),
@@ -569,9 +662,10 @@
     setTimeout(() => m.remove(), 160);
   };
 
-  const pickMenuItem = it => {
-    closeMenu();
-    it.run();
+  // an item with keep (the speed row) runs with the menu still open; it gets the click to see which part was hit
+  const pickMenuItem = (it, e) => {
+    if (!it.keep) closeMenu();
+    it.run(e);
   };
 
   // build and show a popup: model = { tiles, groups }, head = { title, sub, img } or null,
@@ -598,6 +692,7 @@
       el('span', 'am-menu-ic', b).append(it.svg ? it.svg.cloneNode(true) : menuIcon(MI[it.icon]));
       it.labelEl = el('span', 'am-menu-label', b);
       it.labelEl.textContent = it.label;
+      if (it.extra) it.extra(b);
       it.el = b;
       menuItemOf.set(b, it);
       all.push(it);
@@ -780,7 +875,7 @@
         if (type === 'pointerdown' || type === 'mousedown') e.preventDefault();
         if (type === 'click') {
           const b = e.target.closest('.am-menu-item');
-          if (b && menuItemOf.has(b) && !b.classList.contains('am-menu-off')) pickMenuItem(menuItemOf.get(b));
+          if (b && menuItemOf.has(b) && !b.classList.contains('am-menu-off')) pickMenuItem(menuItemOf.get(b), e);
         }
         return;
       }
@@ -1006,6 +1101,18 @@
     .am-menu-ic svg { width: calc(20px * var(--am-ms)) !important; height: calc(20px * var(--am-ms)) !important; display: block; fill: currentColor; }
     .am-menu-item:hover .am-menu-ic { color: #fff; }
     .am-menu-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    /* the speed row: − value + on the right of the row */
+    .am-menu-speed { display: flex; align-items: center; gap: 2px; margin-left: auto; padding-left: 8px; flex-shrink: 0; }
+    .am-menu-sbtn, .am-menu-sval { display: grid; place-items: center; height: calc(26px * var(--am-ms)); border-radius: 8px;
+      font-size: calc(13px * var(--am-ms)); font-variant-numeric: tabular-nums; transition: background .12s ease; }
+    .am-menu-sbtn { width: calc(26px * var(--am-ms)); font-size: calc(16px * var(--am-ms)); color: rgb(255 255 255 / .8); }
+    .am-menu-sval { min-width: calc(44px * var(--am-ms)); color: rgb(255 255 255 / .7); }
+    .am-menu-item.am-on .am-menu-sval { color: #fa586a; font-weight: 600; }
+    .am-menu-sbtn:hover, .am-menu-sval:hover { background: rgb(255 255 255 / .14); color: #fff; }
+    /* the 3-dot button shows the speed while it is not 1× */
+    .am-lcd-more[data-speed] { position: relative; overflow: visible; }
+    .am-lcd-more[data-speed]::after { content: attr(data-speed); position: absolute; right: -2px; top: -3px; padding: 1px 4px;
+      border-radius: 6px; font: 700 8.5px/1.3 system-ui, sans-serif; color: #fff; background: #fa586a; pointer-events: none; }
 
     .am-menu-tiles { display: grid; gap: 6px; padding: 2px 2px 6px; }
     .am-menu-tile { flex-direction: column; justify-content: center; gap: 6px; min-height: calc(64px * var(--am-ms)); padding: 8px 4px;
@@ -1070,8 +1177,13 @@
     .am-vol { display: flex; align-items: center; }
     .am-vol input { width: 0; opacity: 0; margin: 0; accent-color: #fff; cursor: pointer;
       transition: width .2s ease, opacity .2s ease, margin .2s ease; }
-    .am-vol:hover input, .am-vol:focus-within input { width: 90px; opacity: 1; margin-right: 6px; }
-    .am-compact .am-vol:hover input, .am-compact .am-vol:focus-within input { width: 70px; }
+    .am-vol:hover input, .am-vol:focus-within input, .am-vol.am-vol-on input { width: 90px; opacity: 1; margin-right: 6px; }
+    .am-compact .am-vol:hover input, .am-compact .am-vol:focus-within input, .am-compact .am-vol.am-vol-on input { width: 70px; }
+    /* the volume in %, between the slider and the button, shown with the slider */
+    .am-vol-pct { width: 0; opacity: 0; overflow: hidden; white-space: nowrap; text-align: right; flex-shrink: 0;
+      font-size: calc(11.5px * var(--am-s, 1)); font-variant-numeric: tabular-nums; color: rgb(255 255 255 / .7);
+      transition: width .2s ease, opacity .2s ease; }
+    .am-vol:is(:hover, :focus-within, .am-vol-on) .am-vol-pct { width: 3.3em; opacity: 1; }
 
     /* mobile / narrow: only art, names, progress and heart (no transport, volume, mode or menu buttons) */
     @media (max-width: 700px) {
@@ -1147,8 +1259,7 @@
   };
   track.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
-    const v = video();
-    if (!v || !v.duration) return;
+    if (!songTime()) return;
     e.stopPropagation();
     track.setPointerCapture(e.pointerId);
     track.classList.add('am-drag');
@@ -1162,8 +1273,8 @@
   });
   const endSeek = commit => {
     if (seeking === null) return;
-    const v = video();
-    if (commit && v && v.duration) v.currentTime = seeking * v.duration;
+    const st = songTime();
+    if (commit && st) seekSong(seeking * st.dur);
     seeking = null;
     track.classList.remove('am-drag');
   };
@@ -1239,12 +1350,43 @@
   volRange.min = '0';
   volRange.max = '100';
   volRange.value = String(getVolume());
-  volRange.addEventListener('input', () => setVolume(+volRange.value));
+  volRange.addEventListener('input', () => { setVolume(+volRange.value); showVolPct(); });
   volRange.addEventListener('click', e => e.stopPropagation());
+  // the volume in %, shown with the slider (between the slider and the button)
+  const volPct = el('span', 'am-vol-pct', volWrap);
+  const showVolPct = () => {
+    const v = video(), t = v && v.muted ? 'Muted' : getVolume() + '%';
+    if (volPct.textContent !== t) volPct.textContent = t;
+  };
   const volBtn = btn(volWrap, 'vol', () => {
     const v = video();
     if (v) v.muted = !v.muted;
+    showVolPct();
   });
+  /* scroll on the volume button or slider: 5% a step. A trackpad sends many small deltas, so they add up until they
+     make a whole step. The slider stays open for a moment after the last step, and the page doesn't scroll. */
+  let volAcc = 0, volShowT = 0;
+  volWrap.addEventListener('wheel', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    const d = (e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY) || -e.deltaX;
+    if (Math.sign(d) !== Math.sign(volAcc)) volAcc = 0;
+    volAcc += d;
+    const steps = Math.trunc(volAcc / 50);
+    if (steps) {
+      volAcc -= steps * 50;                                // keep the rest for the next step
+      const v = video();
+      if (v && v.muted && steps < 0) v.muted = false;     // scrolling up while muted: unmute first
+      const now = Math.round(getVolume() / 5) * 5;
+      const val = Math.max(0, Math.min(100, now - steps * 5));
+      setVolume(val);
+      volRange.value = String(val);
+    }
+    showVolPct();
+    volWrap.classList.add('am-vol-on');
+    clearTimeout(volShowT);
+    volShowT = setTimeout(() => volWrap.classList.remove('am-vol-on'), 1200);
+  }, { passive: false });
 
   /* bar layouts: full, compact (a centered pill) and classic (YouTube Music's own order: the song on the left, the
      transport in the middle, time / like / menu / volume on the right, the progress bar along the top edge).
@@ -1675,6 +1817,11 @@
       note: () => "Off: the bar fills the width and sits on the edge of the window, like YouTube Music's own" },
     { group: 'Bar & menus', sub: 'Size & position', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
       note: () => 'Grows when you point at it, easier to drag' },
+    // playback speed (syncSpeed below). Kept in % so the steps stay whole numbers; shown as 1.25×
+    { group: 'Playback', sub: 'Speed', key: 'speed', label: 'Speed', min: 50, max: 200, step: 5, def: 100, unit: '%',
+      fmt: v => fmtSpeed(v / 100) },
+    { group: 'Playback', sub: 'Speed', key: 'keepPitch', type: 'toggle', label: 'Keep pitch', min: 0, max: 1, def: 1,
+      note: () => 'Off: the pitch goes up and down with the speed (nightcore / slowed)' },
     // Misc, the last category of the panel (see LATE_GROUPS): YouTube Music's header, updates, experimental features.
     // Its cards show in this order (order of first appearance).
     { group: 'Misc', sub: 'Header', key: 'brand', type: 'toggle', label: 'R1ytm logo', min: 0, max: 1, def: 0,
@@ -1684,6 +1831,13 @@
       note: () => 'A short list of the changes, once per new version' },
     { group: 'Misc', sub: 'Updates', key: 'whatsNewOpen', type: 'action', label: "What's new", button: 'Open',
       min: 0, max: 0, def: 0, run: () => openChangelog('all'), note: () => 'Every version so far' },
+    // backup.js: one file with every setting, to move them to another browser or device
+    { group: 'Misc', sub: 'Backup', key: 'backupExport', type: 'action', label: 'Export settings', button: 'Export',
+      min: 0, max: 0, def: 0, run: (b, note) => exportSettings(note),
+      note: () => 'A file with every setting, the font and the background' },
+    { group: 'Misc', sub: 'Backup', key: 'backupImport', type: 'action', label: 'Import settings', button: 'Import',
+      min: 0, max: 0, def: 0, run: (b, note) => importSettings(note),
+      note: () => { const m = backupMsg; backupMsg = ''; return m || 'Replaces every setting with the ones in the file'; } },
     // vinyl.js
     { group: 'Misc', sub: 'Experimental', key: 'vinyl', type: 'toggle', label: 'Vinyl', min: 0, max: 1, def: 0,
       note: () => 'The art turns into a spinning record, centered on the left edge. Not in video mode or on phones' },
@@ -1828,6 +1982,31 @@
     return out;
   };
   const settings = loadSettings();
+  /* playback speed and pitch, on YTM's <video>. YTM can set the rate back to 1 (a new song, a new video element), so
+     the sync loop calls this every tick and sets it again. At 1× it lets go after setting 1 once, so it doesn't fight
+     anything else that changes the speed. The 3-dot button shows the speed while it is not 1×. */
+  const fmtSpeed = r => (Math.round(r * 100) / 100) + '×';
+  let speedSet = 1;                      // the rate last put on the video
+  const syncSpeed = () => {
+    const want = settings.speed / 100;
+    const v = video();
+    if (v && (want !== 1 || speedSet !== 1)) {
+      if (Math.abs(v.playbackRate - want) > .001) v.playbackRate = want;
+      const pp = want === 1 || !!settings.keepPitch;
+      if ('preservesPitch' in v && v.preservesPitch !== pp) v.preservesPitch = pp;
+      speedSet = want;
+    }
+    const badge = want === 1 ? null : fmtSpeed(want);
+    if (moreBtn.getAttribute('data-speed') !== badge) {
+      if (badge) moreBtn.setAttribute('data-speed', badge); else moreBtn.removeAttribute('data-speed');
+      moreBtn.title = badge ? 'More (speed ' + badge + ')' : '';
+    }
+  };
+  const setSpeed = pct => {
+    settings.speed = Math.max(50, Math.min(200, Math.round(pct / 5) * 5));
+    saveSettings();
+    syncSpeed();
+  };
   /* speed: the values go in one small style sheet, each only on the elements that use it (s.scope), not on <html>.
      A custom property set on <html> is inherited by every element of YTM's very big page, so every change (each step
      of a slider) made the browser restyle all of it. The sheet is only rewritten when a value really changed. */
@@ -1841,6 +2020,7 @@
     }
     const css = [...by].map(([sel, decl]) => `${sel} { ${decl}}`).join('\n');
     if (setVars.textContent !== css) setVars.textContent = css;
+    syncSpeed();
     document.documentElement.classList.toggle('am-easy-track', !!settings.easyTrack);
     document.documentElement.classList.toggle('am-dock', !settings.barFloat);
     applyRefraction();
@@ -1926,10 +2106,11 @@
         const row = el('div', 'am-set-row am-set-inline', section);
         const lt = el('div', 'am-set-ltext', row);
         el('div', 'am-set-label', lt).textContent = s.label;
-        if (s.note) el('div', 'am-set-note', lt).textContent = s.note();
+        const note = el('div', 'am-set-note', lt);          // run() can write a result here
+        if (s.note) note.textContent = s.note();
         const b = el('button', 'am-set-btn am-set-soft', row);
         b.textContent = s.button;
-        b.addEventListener('click', () => s.run());
+        b.addEventListener('click', () => s.run(b, note));
         return;
       }
       if (s.type === 'toggle') {
@@ -1968,7 +2149,7 @@
       Object.assign(r, { type: 'range', min: s.min, max: s.max, step: s.step });
       const show = () => {
         r.value = String(settings[s.key]);
-        val.textContent = settings[s.key] + s.unit;
+        val.textContent = s.fmt ? s.fmt(settings[s.key]) : settings[s.key] + s.unit;
         r.style.setProperty('--p', ((settings[s.key] - s.min) / (s.max - s.min) * 100) + '%');
       };
       // while dragging: the number follows at once, the look once per frame; saved when let go
@@ -3406,7 +3587,11 @@
     .am-rail .am-vol { flex-direction: column; gap: 0; }
     .am-bar.am-rail .am-vol input { writing-mode: vertical-lr; direction: rtl; width: 18px; height: 0; margin: 0;
       opacity: 0; transition: height .22s cubic-bezier(.2, .8, .2, 1), opacity .18s ease, margin .22s ease; }
-    .am-bar.am-rail .am-vol:is(:hover, :focus-within) input { height: 96px; opacity: 1; margin-bottom: 6px; }
+    .am-bar.am-rail .am-vol:is(:hover, :focus-within, .am-vol-on) input { height: 96px; opacity: 1; margin-bottom: 6px; }
+    /* the % under the upright slider, above the button */
+    .am-bar.am-rail .am-vol .am-vol-pct { width: auto; height: 0; text-align: center; font-size: 10.5px; line-height: 14px;
+      transition: height .22s cubic-bezier(.2, .8, .2, 1), opacity .18s ease; }
+    .am-bar.am-rail .am-vol:is(:hover, :focus-within, .am-vol-on) .am-vol-pct { width: auto; height: 14px; opacity: 1; }
     .am-rail.am-rshort > .am-left > .am-dim, .am-rail.am-rshorter > .am-right > :not(.am-vol) { display: none; }
     /* right + Full: the account picture at the top of the rail */
     .am-avatar { display: none; }
@@ -3460,7 +3645,7 @@
     .am-card > .am-left { justify-content: space-between; }
     .am-cbot { display: flex; align-items: center; justify-content: space-between; }
     .am-cbot > .am-right { gap: 2px; }
-    .am-card .am-mode, .am-card .am-vol input { display: none; }
+    .am-card .am-mode, .am-card .am-vol input, .am-card .am-vol-pct { display: none; }
     .am-card .am-btn { width: calc(30px * var(--am-s)); height: calc(30px * var(--am-s)); }
 
     /* "R1ytm logo" (syncBrand): YTM's picture cropped to its mark, at its own size; "R1ytm" after it in the page font */
@@ -4226,9 +4411,10 @@
     const set = (a, f) => { try { navigator.mediaSession.setActionHandler(a, f); } catch {} };
     set('nexttrack', clickYt('Next'));
     set('previoustrack', clickYt('Previous'));
-    set('seekto', d => { const v = video(); if (v && d && Number.isFinite(d.seekTime)) v.currentTime = d.seekTime; });
-    set('seekbackward', d => { const v = video(); if (v) v.currentTime = Math.max(0, v.currentTime - ((d && d.seekOffset) || 10)); });
-    set('seekforward', d => { const v = video(); if (v) v.currentTime += (d && d.seekOffset) || 10; });
+    // the OS gives song times; seekSong() keeps them right when the video counts from an earlier song
+    set('seekto', d => { if (d && Number.isFinite(d.seekTime)) seekSong(d.seekTime); });
+    set('seekbackward', d => { const st = songTime(); if (st) seekSong(st.cur - ((d && d.seekOffset) || 10)); });
+    set('seekforward', d => { const st = songTime(); if (st) seekSong(st.cur + ((d && d.seekOffset) || 10)); });
   };
 
   /* the album. YTM often leaves the media session's album empty, so it is looked up in YTM's own data for the song
@@ -4389,8 +4575,10 @@
     lyr.sig = sig;
     if (!sig) return null;
     if (lyr.staleSig !== null) { if (sig === lyr.staleSig) return null; lyr.staleSig = null; }
-    if (v.duration && +last.dataset.time > v.duration + 1) return null;      // can't be this song's
-    const t = v.currentTime + LYRIC_LEAD;
+    const st = songTime();
+    if (!st) return null;
+    if (+last.dataset.time > st.dur + 1) return null;      // can't be this song's
+    const t = st.cur + LYRIC_LEAD;
     let i = -1;
     for (let k = 0; k < lines.length && +lines[k].dataset.time <= t; k++) i = k;
     const nl = lines[i + 1], next = nl ? +nl.dataset.time : 0, nextText = nl ? lyricText(nl) : '';
@@ -4439,11 +4627,12 @@
     clearTimeout(zenTick);
     if (zenMode !== 'on') return;
     const v = video();
-    const nearEnd = SLEEP_STEPS[sleepIdx] === 'end' && v && v.duration && v.duration - v.currentTime < 2;
+    const st = songTime();
+    const nearEnd = SLEEP_STEPS[sleepIdx] === 'end' && st && st.dur - st.cur < 2;
     let wait = nearEnd ? 250 : 1000 - Date.now() % 1000 + 5;
     // a lyric line: wake right when the next one starts (not more often than that)
-    if (zenUi.lyricNext && v && !v.paused && !document.hidden) {
-      const ms = (zenUi.lyricNext - LYRIC_LEAD - v.currentTime) / (v.playbackRate || 1) * 1000 + 15;
+    if (zenUi.lyricNext && v && st && !v.paused && !document.hidden) {
+      const ms = (zenUi.lyricNext - LYRIC_LEAD - st.cur) / (v.playbackRate || 1) * 1000 + 15;
       if (ms > 0) wait = Math.min(wait, Math.max(40, ms));
     }
     zenTick = setTimeout(() => { zenUpdate(); zenSchedule(); }, wait);
@@ -4506,11 +4695,11 @@
     }
 
     // sleep timer
-    const st = SLEEP_STEPS[sleepIdx];
+    const st = SLEEP_STEPS[sleepIdx], song = st === 'end' ? songTime() : null;
     if (st === 'end' && v) {
       const changed = sleepTitle && t && t !== sleepTitle;
       if (changed && sleepSkip) { sleepTitle = t; sleepSkip = false; }
-      else if (changed || (v.duration && v.currentTime >= v.duration - .6)) { v.pause(); sleepIdx = 0; }
+      else if (changed || (song && song.cur >= song.dur - .6)) { v.pause(); sleepIdx = 0; }
     } else if (sleepAt && now >= sleepAt) {
       if (v && !v.paused) v.pause();
       sleepIdx = 0; sleepAt = 0;
@@ -4784,6 +4973,12 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.3', date: '2026-11-12', title: 'Speed, volume and a settings backup', items: [
+      'Possibly fixed: the progress bar and the time sometimes counted the songs before this one, after a new song started. If it still happens, please report it on GitHub: github.com/R1ftzy/r1ytm-player/issues',
+      'Speed: 0.5× to 2× in Playback settings or in the 3-dot menu. Turn off Keep pitch for a nightcore / slowed sound. The 3-dot button shows the speed while it is not 1×',
+      'The volume shows in % next to its slider. Scroll on the volume button to change it',
+      'Misc > Backup: export every setting (with your font and background) to a file, and import it on another browser',
+    ] },
     { v: '1.9.2', date: '2026-11-11', items: [
       'The player page slides in from the side the bar is on (top, left or right), and slides back toward it when it closes',
     ] },
@@ -4964,9 +5159,147 @@
     clEl = null;
     clStyle.remove();
   };
+  /* ---------- backup: export / import every setting as one file (settings "Misc" -> "Backup") ---------- */
+  // The file is JSON: the settings (am-settings), the bar layout, the look (am-look: font, background, page dims...),
+  // zen's last length, and the files the look uses (font, background image, gradient and its strokes) from IndexedDB
+  // as base64. Import checks all of it first and changes nothing when the file is not valid.
+  const BACKUP_FORMAT = 1;
+  const BACKUP_FILES = ['font', 'bg-image', 'bg-gradient', 'grad-paint'];      // IndexedDB keys (see look.js)
+  const BACKUP_MAX = 60 * 1024 * 1024;                                         // a bigger file is not ours
+  let backupMsg = '';                         // the import result, shown in the panel built again after an import
+
+  const toB64 = buf => {
+    const b = new Uint8Array(buf);
+    let s = '';
+    for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+    return btoa(s);
+  };
+  const fromB64 = s => {
+    const bin = atob(s), b = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+    return b;
+  };
+  // a stored file -> { kind, type, data }: the font is kept as an ArrayBuffer, the pictures as Blobs
+  const packFile = async v => {
+    if (v instanceof Blob) return { kind: 'blob', type: v.type || '', data: toB64(await v.arrayBuffer()) };
+    if (v instanceof ArrayBuffer) return { kind: 'buffer', type: '', data: toB64(v) };
+    if (ArrayBuffer.isView(v)) return { kind: 'buffer', type: '', data: toB64(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)) };
+    return null;
+  };
+  const unpackFile = f => {
+    if (!f || typeof f !== 'object' || typeof f.data !== 'string' || !/^(blob|buffer)$/.test(f.kind)) throw new Error('a file in it is damaged');
+    const b = fromB64(f.data);
+    return f.kind === 'blob' ? new Blob([b], { type: typeof f.type === 'string' ? f.type : '' }) : b.buffer;
+  };
+
+  const exportSettings = async note => {
+    try {
+      const files = {};
+      for (const k of BACKUP_FILES) {
+        let v = null;
+        try { v = await idb.get(k); } catch {}
+        const p = v ? await packFile(v) : null;
+        if (p) files[k] = p;
+      }
+      const data = {
+        app: 'r1ytm', format: BACKUP_FORMAT, version: VERSION, exported: new Date().toISOString(),
+        settings: Object.assign({}, settings),
+        layout: layoutNow,
+        look: JSON.parse(JSON.stringify(look)),
+        zenMinutes: zenMins(),
+        files,
+      };
+      const name = 'r1ytm-settings-' + new Date().toISOString().slice(0, 10) + '.json';
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
+      const a = el('a');
+      a.href = url;
+      a.download = name;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      if (note) note.textContent = 'Saved ' + name;
+    } catch (e) {
+      console.warn('[am-bar] export failed', e);
+      if (note) note.textContent = 'Export failed: ' + (e && e.message || e);
+    }
+  };
+
+  // check the file and turn it into the values to apply; throws with a short reason when it is not valid
+  const readBackup = text => {
+    let d;
+    try { d = JSON.parse(text); } catch { throw new Error('not a JSON file'); }
+    if (!d || typeof d !== 'object' || d.app !== 'r1ytm') throw new Error('not an r1ytm settings file');
+    if (typeof d.format !== 'number' || d.format > BACKUP_FORMAT) throw new Error('made by a newer r1ytm, update first');
+    if (!d.settings || typeof d.settings !== 'object') throw new Error('it has no settings');
+    // settings: every known key, a number in its range; a missing one goes back to its default
+    const s = {};
+    for (const def of SETTINGS) {
+      if (!(def.key in d.settings)) { s[def.key] = def.def; continue; }
+      const v = Number(d.settings[def.key]);
+      if (!Number.isFinite(v)) throw new Error('the value of "' + (def.label || def.key) + '" is not a number');
+      s[def.key] = Math.min(def.max, Math.max(def.min, v));
+    }
+    const layout = LAYOUTS.includes(d.layout) ? d.layout : 'full';
+    // look: only the known keys, each of the same type as its default
+    const lk = JSON.parse(JSON.stringify(LOOK_DEF));
+    if (d.look && typeof d.look === 'object') {
+      for (const k of Object.keys(LOOK_DEF)) {
+        if (!(k in d.look)) continue;
+        const v = d.look[k], def = LOOK_DEF[k];
+        const ok = def === null ? v === null || typeof v === 'object'
+          : typeof def === 'object' ? v && typeof v === 'object' && !Array.isArray(v)
+          : typeof v === typeof def && (typeof v !== 'number' || Number.isFinite(v));
+        if (!ok) throw new Error('the look value "' + k + '" is not valid');
+        lk[k] = v;
+      }
+    }
+    const zm = Number(d.zenMinutes);
+    const files = {};
+    if (d.files && typeof d.files === 'object') {
+      for (const k of BACKUP_FILES) if (d.files[k]) {
+        try { files[k] = unpackFile(d.files[k]); } catch (e) { throw new Error((e && e.message) || 'a file in it is damaged'); }
+      }
+    }
+    return { settings: s, layout, look: lk, zenMinutes: Number.isFinite(zm) ? zm : null, files };
+  };
+
+  const importSettings = note => ui.file('.json,application/json', async f => {
+    const say = t => { if (note) note.textContent = t; };
+    try {
+      if (f.size > BACKUP_MAX) throw new Error('the file is too big');
+      const b = readBackup(await f.text());
+      // the files first: if one can't be saved, nothing else changes
+      for (const [k, v] of Object.entries(b.files)) await idb.set(k, v);
+      const was = Object.assign({}, settings);
+      Object.assign(settings, b.settings);
+      applySettings();
+      saveSettings();
+      for (const s of SETTINGS) if (s.change && was[s.key] !== settings[s.key]) { try { s.change(); } catch {} }
+      applyMode(b.layout);
+      placeBar();
+      hideBase();
+      for (const k of Object.keys(look)) delete look[k];
+      Object.assign(look, b.look);
+      saveLook();
+      if (fileFace) { document.fonts.delete(fileFace); fileFace = null; }      // a new font file: load it again
+      applyFont();
+      applyBg();
+      applyBanner();
+      applyArtist();
+      if (b.zenMinutes !== null) store.set(ZEN_MIN_KEY, String(b.zenMinutes));
+      // the panel built again with the new values; the note says it worked
+      if (setEl) { backupMsg = 'Imported ' + f.name; rebuildSettings(); }
+      else say('Imported ' + f.name);
+    } catch (e) {
+      console.warn('[am-bar] import failed', e);
+      say('Not imported: ' + ((e && e.message) || e) + '. Nothing was changed');
+    }
+  });
   /* ---------- sync loop ---------- */
   let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
   const timer = setInterval(() => {
+    syncSpeed();                                          // also in zen: the speed stays what it is set to
     if (zenEl) return;                                    // zen covers everything: nothing here is visible, save the work
     // the settings panel covers the page: the page checks below (they measure the page, which is slow) wait, so the
     // panel stays smooth. The bar keeps updating, it is the live preview for the bar settings.
@@ -5024,10 +5357,11 @@
 
     const v = video();
     if (v) {
-      if (seeking === null) fill.style.width = (v.duration ? (v.currentTime / v.duration) * 100 : 0) + '%';
-      if (formNow === 'rail') { drawRing(); setProgress(v.duration ? (v.currentTime / v.duration) * 100 : 0); }
+      const st = songTime(), pct = st ? (st.cur / st.dur) * 100 : 0;
+      if (seeking === null) fill.style.width = pct + '%';
+      if (formNow === 'rail') { drawRing(); setProgress(pct); }
       if (formNow === 'classic' || formNow === 'rail') {
-        const tt = mmss(v.currentTime) + ' / ' + mmss(v.duration);
+        const tt = st ? mmss(st.cur) + ' / ' + mmss(st.dur) : '0:00 / 0:00';
         if (timeEl.textContent !== tt) timeEl.textContent = tt;
       }
       if (v.paused !== wasPaused) {
@@ -5042,6 +5376,7 @@
       }
     }
     if (document.activeElement !== volRange) volRange.value = String(getVolume());
+    showVolPct();
 
     const lk = ytLike();
     const liked = isLiked(lk);

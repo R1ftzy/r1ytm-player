@@ -83,7 +83,11 @@
     .am-rail .am-vol { flex-direction: column; gap: 0; }
     .am-bar.am-rail .am-vol input { writing-mode: vertical-lr; direction: rtl; width: 18px; height: 0; margin: 0;
       opacity: 0; transition: height .22s cubic-bezier(.2, .8, .2, 1), opacity .18s ease, margin .22s ease; }
-    .am-bar.am-rail .am-vol:is(:hover, :focus-within) input { height: 96px; opacity: 1; margin-bottom: 6px; }
+    .am-bar.am-rail .am-vol:is(:hover, :focus-within, .am-vol-on) input { height: 96px; opacity: 1; margin-bottom: 6px; }
+    /* the % under the upright slider, above the button */
+    .am-bar.am-rail .am-vol .am-vol-pct { width: auto; height: 0; text-align: center; font-size: 10.5px; line-height: 14px;
+      transition: height .22s cubic-bezier(.2, .8, .2, 1), opacity .18s ease; }
+    .am-bar.am-rail .am-vol:is(:hover, :focus-within, .am-vol-on) .am-vol-pct { width: auto; height: 14px; opacity: 1; }
     .am-rail.am-rshort > .am-left > .am-dim, .am-rail.am-rshorter > .am-right > :not(.am-vol) { display: none; }
     /* right + Full: the account picture at the top of the rail */
     .am-avatar { display: none; }
@@ -137,7 +141,7 @@
     .am-card > .am-left { justify-content: space-between; }
     .am-cbot { display: flex; align-items: center; justify-content: space-between; }
     .am-cbot > .am-right { gap: 2px; }
-    .am-card .am-mode, .am-card .am-vol input { display: none; }
+    .am-card .am-mode, .am-card .am-vol input, .am-card .am-vol-pct { display: none; }
     .am-card .am-btn { width: calc(30px * var(--am-s)); height: calc(30px * var(--am-s)); }
 
     /* "R1ytm logo" (syncBrand): YTM's picture cropped to its mark, at its own size; "R1ytm" after it in the page font */
