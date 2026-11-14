@@ -144,7 +144,9 @@
         item('playNext', 'Play next', /play next/i),
         item('addQueue', 'Add to queue', /add to queue/i),
         item('playlist', 'Save to playlist', /(save|add) to playlist/i),
-        item('share', 'Share', /^share/i),
+        // Share: our link popup (share.js); YouTube Music's own share dialog is its "More" tile
+        Object.assign(item('share', 'Share', /^share/i), { keep: true,
+          run: () => openCopyPopup(nowTarget(), true, () => runYtItem(/^share/i, 'Share')) }),
       ],
       groups: [
         [
@@ -267,12 +269,13 @@
     const place = m => {
       const br = bar.getBoundingClientRect(), down = posNow === 'top';
       if (posNow === 'left' || posNow === 'right') {
-        // beside the rail / card, level with the button, kept on screen
+        // beside the rail / card, its middle on the bar's middle (the bar's center line), kept on screen
         m.style.maxHeight = (innerHeight - 16) + 'px';
         document.body.append(m);
-        const b = anchor.getBoundingClientRect(), r = m.getBoundingClientRect();
+        // the layout size: getBoundingClientRect() would give the size mid-animation (the menu opens from 92%)
+        const b = anchor.getBoundingClientRect(), r = { width: m.offsetWidth, height: m.offsetHeight };
         const left = posNow === 'left' ? br.right + 10 : br.left - 10 - r.width;
-        const top = Math.max(8, Math.min(innerHeight - r.height - 8, b.top - 8));
+        const top = Math.max(8, Math.min(innerHeight - r.height - 8, br.top + br.height / 2 - r.height / 2));
         m.style.left = Math.max(8, left) + 'px';
         m.style.top = top + 'px';
         m.style.transformOrigin = `${posNow === 'left' ? '0' : '100%'} ${Math.round(b.top + b.height / 2 - top)}px`;

@@ -2,6 +2,7 @@
   let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
   const timer = setInterval(() => {
     syncSpeed();                                          // also in zen: the speed stays what it is set to
+    checkPrompts();                                       // also in zen ("Listen on this device?")
     if (zenEl) return;                                    // zen covers everything: nothing here is visible, save the work
     // the settings panel covers the page: the page checks below (they measure the page, which is slow) wait, so the
     // panel stays smooth. The bar keeps updating, it is the live preview for the bar settings.
@@ -25,6 +26,9 @@
     watchPage();
     onPageState();
     bar.classList.toggle('am-hidden', isFullscreen());
+    syncAutoHide();
+    syncPeek();
+    syncYtToast();
 
     const m = navigator.mediaSession.metadata;
     const idle = !m || !m.title;
@@ -77,12 +81,14 @@
         volBtn.replaceChildren(svg(muted ? P.mute : P.vol));
       }
     }
-    if (document.activeElement !== volRange) volRange.value = String(getVolume());
+    if (document.activeElement !== volRange && volTarget === null) volRange.value = String(getVolume());   // not mid-glide
     showVolPct();
 
     const lk = ytLike();
     const liked = isLiked(lk);
     if (liked !== wasLiked) {
+      // a small bounce is the feedback (YTM's own toast is hidden); not on the first look or a new song
+      if (wasLiked !== null && performance.now() - lastLikeAt < 4000) bounceHeart();
       wasLiked = liked;
       likeBtn.replaceChildren(svg(liked ? P.heartFill : P.heart));
       likeBtn.classList.toggle('am-on', liked);
@@ -106,6 +112,10 @@
     clearInterval(timer);
     closeMenu();
     closeSettings();
+    closePalette();
+    promptObs.disconnect();
+    peekReset();
+    for (const n of [toastEl, peekEl, pFly, pEdge, pShade, shareStyle, peekStyle, ahStyle, keyStyle]) n.remove();
     bar.remove();
     for (const list of guideEntries.values()) list.forEach(e => e.g.remove());
     for (const n of [...roomed.keys()]) unroom(n);
@@ -125,7 +135,7 @@
     rope.remove();
     document.documentElement.classList.remove('am-pos-' + posNow, 'am-in-header', 'am-top-float', 'am-search-open', 'am-dock',
       'am-side', 'am-side-in', 'am-side-float', 'am-side-full', 'am-brand-on');
-    document.documentElement.classList.remove('am-refract', 'am-easy-track');
+    document.documentElement.classList.remove('am-refract', 'am-easy-track', 'am-show-volpct', 'am-ah');
     refractDefs.remove();
     document.documentElement.classList.remove('am-player-open', 'am-animating', 'am-fs', 'am-mini-hidden');
     document.querySelectorAll(`${MINI}, ytmusic-player-bar, #player-bar-background`).forEach(n => {

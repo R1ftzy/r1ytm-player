@@ -29,6 +29,15 @@
       note: () => "Off: the bar fills the width and sits on the edge of the window, like YouTube Music's own" },
     { group: 'Bar & menus', sub: 'Size & position', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
       note: () => 'Grows when you point at it, easier to drag' },
+    // peek.js, autohide.js
+    { group: 'Bar & menus', sub: 'Behavior', key: 'peek', type: 'toggle', label: 'Up-next peek', min: 0, max: 1, def: 1,
+      note: () => 'Point at the next button to see the next song' },
+    { group: 'Bar & menus', sub: 'Behavior', key: 'autoHide', type: 'toggle', label: 'Auto-hide', min: 0, max: 1, def: 0,
+      note: () => 'The bar hides when you are not using it, and comes back when you point near it. Not on phones' },
+    { group: 'Bar & menus', sub: 'Behavior', key: 'autoHideDelay', type: 'choice', label: 'Hide after',
+      options: [['2 s', 2], ['4 s', 4], ['8 s', 8]], min: 2, max: 8, def: 4, dep: 'autoHide' },
+    { group: 'Bar & menus', sub: 'Behavior', key: 'autoHideSong', type: 'toggle', label: 'Show on a new song', min: 0, max: 1, def: 1,
+      dep: 'autoHide', note: () => 'For a few seconds' },
     // playback speed (syncSpeed below). Kept in % so the steps stay whole numbers; shown as 1.25×
     { group: 'Playback', sub: 'Speed', key: 'speed', label: 'Speed', min: 50, max: 200, step: 5, def: 100, unit: '%',
       fmt: v => fmtSpeed(v / 100) },
@@ -43,6 +52,19 @@
       note: () => 'A short list of the changes, once per new version' },
     { group: 'Misc', sub: 'Updates', key: 'whatsNewOpen', type: 'action', label: "What's new", button: 'Open',
       min: 0, max: 0, def: 0, run: () => openChangelog('all'), note: () => 'Every version so far' },
+    // title-links.js: the volume control (shown in Bar & menus, after Behavior)
+    { group: 'Bar & menus', sub: 'Volume', key: 'volPct', type: 'toggle', label: 'Show volume %', min: 0, max: 1, def: 0,
+      note: () => 'Next to the volume slider while it is open' },
+    { group: 'Bar & menus', sub: 'Volume', key: 'volInvert', type: 'toggle', label: 'Invert scroll', min: 0, max: 1, def: 0,
+      note: () => 'Scroll on the volume button: off, down turns it up; on, down turns it down' },
+    // share.js: the format "Copy link" uses (the others are one click further in the menu)
+    { group: 'Misc', sub: 'Sharing', key: 'copyFormat', type: 'choice', label: 'Copy link as',
+      options: [['YouTube', 0], ['YT Music', 1], ['Short', 2], ['Koutube', 3], ['Markdown', 4]], min: 0, max: 4, def: 0,
+      note: () => 'YouTube plays in Discord. Koutube: richer preview, third-party' },
+    // prompts.js: press "Switch" on YTM's false "Listen on this device?" prompt
+    { group: 'Playback', sub: 'YouTube Music prompts', key: 'autoSwitch', type: 'toggle', label: 'Switch to this device automatically',
+      min: 0, max: 1, def: 0, change: () => syncPromptWatch(),
+      note: () => 'Answers “Listen on this device?” with Switch. If someone else really uses your account, this stops their music' },
     // backup.js: one file with every setting, to move them to another browser or device
     { group: 'Misc', sub: 'Backup', key: 'backupExport', type: 'action', label: 'Export settings', button: 'Export',
       min: 0, max: 0, def: 0, run: (b, note) => exportSettings(note),
@@ -87,6 +109,8 @@
     // how this panel looks: categories on the side (1, Modern) or the original long list (0, Legacy). No group: it is
     // the switch in the panel's footer, not a row
     { key: 'setLayout', min: 0, max: 1, def: 1 },
+    // share.js: the Koutube notice was answered with "Don't show this again"
+    { key: 'koutubeOk', min: 0, max: 1, def: 0 },
   ];
   // A row's group is its category (a page in the Modern layout); sub splits a category into cards with a small
   // heading. Rows are gathered by group and sub wherever they are in the list, so order only matters inside a card.
@@ -234,6 +258,7 @@
     if (setVars.textContent !== css) setVars.textContent = css;
     syncSpeed();
     document.documentElement.classList.toggle('am-easy-track', !!settings.easyTrack);
+    document.documentElement.classList.toggle('am-show-volpct', !!settings.volPct);
     document.documentElement.classList.toggle('am-dock', !settings.barFloat);
     applyRefraction();
   };
@@ -409,6 +434,7 @@
     const showSeg = () => segBtns.forEach(([b, m]) => b.classList.toggle('am-on', layoutNow === m));
     showSeg();
     const lookRefresh = buildLookSettings(p);      // Font + Background groups
+    const keysRefresh = buildKeySettings(p);       // Shortcuts (keys.js)
     addGroups(SETTINGS.filter(s => LATE_GROUPS.includes(s.group)));
     showDeps();
 
@@ -433,6 +459,8 @@
       applyFont();
       applyBg();
       lookRefresh();
+      resetKeys();
+      keysRefresh();
       if (settings.setLayout !== wasLayout) rebuildSettings();
     });
     // the panel's own layout, between Reset and Done

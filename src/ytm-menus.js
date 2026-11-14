@@ -76,7 +76,13 @@
       m.style.left = Math.max(minX, Math.min(maxX - r.width, left)) + 'px';
       m.style.transformOrigin = `${t.type === 'click' ? '100%' : '0'} ${down ? '0' : '100%'}`;
     };
-    buildMenu(anchor, genModel(items, opener), head, place);
+    const model = genModel(items, opener);
+    const target = menuTarget(t.el);                      // share.js: our "Copy link" first in the first group
+    if (target && head) target.img = head.img;
+    // Share opens our link popup (share.js); "More" in it runs YTM's own Share item
+    const share = target && model.tiles.find(x => /^share/i.test(x.label));
+    if (share) { const ytShare = share.run; Object.assign(share, { keep: true, run: () => openCopyPopup(target, false, ytShare) }); }
+    buildMenu(anchor, model, head, place);
     menuTrigger = t.el;
   };
 

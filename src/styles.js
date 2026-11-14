@@ -219,6 +219,7 @@
       font-size: calc(11.5px * var(--am-s, 1)); font-variant-numeric: tabular-nums; color: rgb(255 255 255 / .7);
       transition: width .2s ease, opacity .2s ease; }
     .am-vol:is(:hover, :focus-within, .am-vol-on) .am-vol-pct { width: 3.3em; opacity: 1; }
+    html:not(.am-show-volpct) .am-vol-pct { display: none !important; }     /* Bar & menus > Volume > Show volume % */
 
     /* mobile / narrow: only art, names, progress and heart (no transport, volume, mode or menu buttons) */
     @media (max-width: 700px) {

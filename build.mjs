@@ -38,6 +38,11 @@ const SECTIONS = [
   'vinyl',           // player page art as a spinning record
   'changelog',       // "What's new" popup after an update
   'backup',          // export / import every setting as one file
+  'share',           // copy links (Discord embeds) + the toast note at the bar
+  'prompts',         // auto-switch for YTM's "Listen on this device?" prompt
+  'peek',            // up-next peek on the next button
+  'autohide',        // auto-hide bar
+  'keys',            // keyboard shortcuts + command palette (Ctrl+K)
   'sync-loop',       // the interval that keeps everything in sync + teardown
 ];
 

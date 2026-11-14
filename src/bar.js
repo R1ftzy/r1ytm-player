@@ -23,7 +23,7 @@
   const shuf = btn(left, 'shuffle', clickYt('Shuffle'), 'am-dim');
   btn(left, 'rew', clickYt('Previous'));
   const play = btn(left, 'play', clickYt('PlayPause'), 'am-big');
-  btn(left, 'ff', clickYt('Next'));
+  const nextBtn = btn(left, 'ff', clickYt('Next'));
   const rep = btn(left, 'repeat', clickYt('Repeat'), 'am-dim');
 
   // center: now playing (or logo when idle)
@@ -34,7 +34,9 @@
   const info = el('div', 'am-info', lcd);
   const title = el('div', 'am-title', info);
   const artist = el('div', 'am-artist', info);
+  let lastLikeAt = 0;            // a like / unlike just now: YTM's "Saved to liked music" toast is dropped (share.js)
   const likeBtn = btn(lcd, 'heart', () => {
+    lastLikeAt = performance.now();
     const t = ytLike();
     if (t) t.click();
     else console.warn('[am-bar] like button not found');

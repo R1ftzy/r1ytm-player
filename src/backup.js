@@ -46,6 +46,7 @@
         layout: layoutNow,
         look: JSON.parse(JSON.stringify(look)),
         zenMinutes: zenMins(),
+        keys: Object.assign({}, keys),
         files,
       };
       const name = 'r1ytm-settings-' + new Date().toISOString().slice(0, 10) + '.json';
@@ -94,13 +95,21 @@
       }
     }
     const zm = Number(d.zenMinutes);
+    // shortcuts: only known actions, each a key combination or '' (none); anything else is left out
+    const ks = {};
+    if (d.keys && typeof d.keys === 'object') {
+      for (const a of ACTIONS) {
+        const v = d.keys[a.id];
+        if (typeof v === 'string' && /^((Ctrl|Alt|Shift|Meta)\+)*[A-Za-z0-9]*$/.test(v)) ks[a.id] = v;
+      }
+    }
     const files = {};
     if (d.files && typeof d.files === 'object') {
       for (const k of BACKUP_FILES) if (d.files[k]) {
         try { files[k] = unpackFile(d.files[k]); } catch (e) { throw new Error((e && e.message) || 'a file in it is damaged'); }
       }
     }
-    return { settings: s, layout, look: lk, zenMinutes: Number.isFinite(zm) ? zm : null, files };
+    return { settings: s, layout, look: lk, zenMinutes: Number.isFinite(zm) ? zm : null, keys: ks, files };
   };
 
   const importSettings = note => ui.file('.json,application/json', async f => {
@@ -127,6 +136,9 @@
       applyBanner();
       applyArtist();
       if (b.zenMinutes !== null) store.set(ZEN_MIN_KEY, String(b.zenMinutes));
+      for (const k of Object.keys(keys)) delete keys[k];
+      Object.assign(keys, b.keys);
+      saveKeys();
       // the panel built again with the new values; the note says it worked
       if (setEl) { backupMsg = 'Imported ' + f.name; rebuildSettings(); }
       else say('Imported ' + f.name);

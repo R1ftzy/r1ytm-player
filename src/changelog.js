@@ -5,6 +5,18 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.4', date: '2026-11-14', title: 'Links for Discord, shortcuts and a command palette', items: [
+      'Share in the 3-dot menus opens a small popup of links: YouTube (plays inline in Discord), YouTube Music, short, Koutube (a richer Discord preview, through a third-party service) and Markdown, plus More for YouTube Music\'s own share options. “Start at” makes the link start where you are in the song',
+      'Shortcuts: Ctrl+K opens a command palette for every action and setting. Change any key in Settings > Shortcuts',
+      'YouTube Music\'s own pop-up notices now show as r1ytm\'s note at the bar (with their Undo button). A like just gives the heart a small bounce',
+      'Volume: scrolling on the volume button glides smoothly; down turns it up (Bar & menus > Volume > Invert scroll for the other way). The volume % is off by default (Bar & menus > Volume)',
+      'L likes the song playing now',
+      'Auto-hide works on the left / right rail, and the What\'s new text is bigger',
+      'Up-next peek: point at the next button and the bar flows out to show the next song, like the tape on the rail',
+      'Auto-hide (Bar & menus > Behavior): the bar hides when you are not using it and comes back when you point near it',
+      'Optional: answer YouTube Music\'s false “Listen on this device?” prompt with Switch automatically (Playback)',
+      'With the bar on the left or right, the 3-dot menu opens centered on the bar',
+    ] },
     { v: '1.9.3', date: '2026-11-12', title: 'Speed, volume and a settings backup', items: [
       'Possibly fixed: the progress bar and the time sometimes counted the songs before this one, after a new song started. If it still happens, please report it on GitHub: github.com/R1ftzy/r1ytm-player/issues',
       'Speed: 0.5× to 2× in Playback settings or in the 3-dot menu. Turn off Keep pitch for a nightcore / slowed sound. The 3-dot button shows the speed while it is not 1×',
@@ -150,16 +162,16 @@
   const clStyle = el('style', null, document.head);
   clStyle.textContent = `
     .am-cl-back { z-index: 100004; }
-    .am-set.am-cl { width: min(460px, 100%); display: flex; flex-direction: column; }
+    .am-set.am-cl { width: min(540px, 100%); display: flex; flex-direction: column; }
     .am-cl-list { overflow-y: auto; min-height: 0; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
-    .am-cl-ver { padding: 12px 14px; border-radius: 14px; background: rgb(255 255 255 / .06); }
+    .am-cl-ver { padding: 14px 16px; border-radius: 14px; background: rgb(255 255 255 / .06); }
     .am-cl-ver + .am-cl-ver { margin-top: 8px; }
     .am-cl-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-    .am-cl-v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
-    .am-cl-date { font-size: 12px; color: rgb(255 255 255 / .45); font-variant-numeric: tabular-nums; }
-    .am-cl-title { font-size: 13.5px; font-weight: 600; margin-top: 4px; color: rgb(255 255 255 / .85); }
-    .am-cl-items { margin: 8px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.45; color: rgb(255 255 255 / .75); }
-    .am-cl-items li + li { margin-top: 4px; }
+    .am-cl-v { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .am-cl-date { font-size: 13px; color: rgb(255 255 255 / .45); font-variant-numeric: tabular-nums; }
+    .am-cl-title { font-size: 15px; font-weight: 600; margin-top: 4px; color: rgb(255 255 255 / .85); }
+    .am-cl-items { margin: 8px 0 0; padding-left: 20px; font-size: 14.5px; line-height: 1.5; color: rgb(255 255 255 / .8); }
+    .am-cl-items li + li { margin-top: 6px; }
     .am-cl-items li::marker { color: rgb(255 255 255 / .35); }
     .am-cl-more { display: flex; justify-content: center; margin-top: 10px; }
     .am-cl-opt { margin-top: 12px; }

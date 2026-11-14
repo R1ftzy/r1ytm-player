@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         r1ytm
 // @namespace    r1ytm
-// @version      1.9.3
+// @version      1.9.4
 // @description  A floating, Apple Music-style control bar for YouTube Music.
 // @match        https://music.youtube.com/*
 // @grant        none
@@ -14,7 +14,7 @@
 // Injected on https://music.youtube.com/* only.
 (() => {
   'use strict';
-  const VERSION = '1.9.3';
+  const VERSION = '1.9.4';
 
   /* ---------- settings ---------- */
   const PLAYER_PAGE_BAR_SPACE = '88px';          // space the player page keeps free for the bar until it's measured (follows the bar size)
@@ -603,7 +603,9 @@
         item('playNext', 'Play next', /play next/i),
         item('addQueue', 'Add to queue', /add to queue/i),
         item('playlist', 'Save to playlist', /(save|add) to playlist/i),
-        item('share', 'Share', /^share/i),
+        // Share: our link popup (share.js); YouTube Music's own share dialog is its "More" tile
+        Object.assign(item('share', 'Share', /^share/i), { keep: true,
+          run: () => openCopyPopup(nowTarget(), true, () => runYtItem(/^share/i, 'Share')) }),
       ],
       groups: [
         [
@@ -726,12 +728,13 @@
     const place = m => {
       const br = bar.getBoundingClientRect(), down = posNow === 'top';
       if (posNow === 'left' || posNow === 'right') {
-        // beside the rail / card, level with the button, kept on screen
+        // beside the rail / card, its middle on the bar's middle (the bar's center line), kept on screen
         m.style.maxHeight = (innerHeight - 16) + 'px';
         document.body.append(m);
-        const b = anchor.getBoundingClientRect(), r = m.getBoundingClientRect();
+        // the layout size: getBoundingClientRect() would give the size mid-animation (the menu opens from 92%)
+        const b = anchor.getBoundingClientRect(), r = { width: m.offsetWidth, height: m.offsetHeight };
         const left = posNow === 'left' ? br.right + 10 : br.left - 10 - r.width;
-        const top = Math.max(8, Math.min(innerHeight - r.height - 8, b.top - 8));
+        const top = Math.max(8, Math.min(innerHeight - r.height - 8, br.top + br.height / 2 - r.height / 2));
         m.style.left = Math.max(8, left) + 'px';
         m.style.top = top + 'px';
         m.style.transformOrigin = `${posNow === 'left' ? '0' : '100%'} ${Math.round(b.top + b.height / 2 - top)}px`;
@@ -833,7 +836,13 @@
       m.style.left = Math.max(minX, Math.min(maxX - r.width, left)) + 'px';
       m.style.transformOrigin = `${t.type === 'click' ? '100%' : '0'} ${down ? '0' : '100%'}`;
     };
-    buildMenu(anchor, genModel(items, opener), head, place);
+    const model = genModel(items, opener);
+    const target = menuTarget(t.el);                      // share.js: our "Copy link" first in the first group
+    if (target && head) target.img = head.img;
+    // Share opens our link popup (share.js); "More" in it runs YTM's own Share item
+    const share = target && model.tiles.find(x => /^share/i.test(x.label));
+    if (share) { const ytShare = share.run; Object.assign(share, { keep: true, run: () => openCopyPopup(target, false, ytShare) }); }
+    buildMenu(anchor, model, head, place);
     menuTrigger = t.el;
   };
 
@@ -1184,6 +1193,7 @@
       font-size: calc(11.5px * var(--am-s, 1)); font-variant-numeric: tabular-nums; color: rgb(255 255 255 / .7);
       transition: width .2s ease, opacity .2s ease; }
     .am-vol:is(:hover, :focus-within, .am-vol-on) .am-vol-pct { width: 3.3em; opacity: 1; }
+    html:not(.am-show-volpct) .am-vol-pct { display: none !important; }     /* Bar & menus > Volume > Show volume % */
 
     /* mobile / narrow: only art, names, progress and heart (no transport, volume, mode or menu buttons) */
     @media (max-width: 700px) {
@@ -1231,7 +1241,7 @@
   const shuf = btn(left, 'shuffle', clickYt('Shuffle'), 'am-dim');
   btn(left, 'rew', clickYt('Previous'));
   const play = btn(left, 'play', clickYt('PlayPause'), 'am-big');
-  btn(left, 'ff', clickYt('Next'));
+  const nextBtn = btn(left, 'ff', clickYt('Next'));
   const rep = btn(left, 'repeat', clickYt('Repeat'), 'am-dim');
 
   // center: now playing (or logo when idle)
@@ -1242,7 +1252,9 @@
   const info = el('div', 'am-info', lcd);
   const title = el('div', 'am-title', info);
   const artist = el('div', 'am-artist', info);
+  let lastLikeAt = 0;            // a like / unlike just now: YTM's "Saved to liked music" toast is dropped (share.js)
   const likeBtn = btn(lcd, 'heart', () => {
+    lastLikeAt = performance.now();
     const t = ytLike();
     if (t) t.click();
     else console.warn('[am-bar] like button not found');
@@ -1355,7 +1367,7 @@
   // the volume in %, shown with the slider (between the slider and the button)
   const volPct = el('span', 'am-vol-pct', volWrap);
   const showVolPct = () => {
-    const v = video(), t = v && v.muted ? 'Muted' : getVolume() + '%';
+    const v = video(), t = v && v.muted ? 'Muted' : volNow() + '%';
     if (volPct.textContent !== t) volPct.textContent = t;
   };
   const volBtn = btn(volWrap, 'vol', () => {
@@ -1363,26 +1375,47 @@
     if (v) v.muted = !v.muted;
     showVolPct();
   });
-  /* scroll on the volume button or slider: 5% a step. A trackpad sends many small deltas, so they add up until they
-     make a whole step. The slider stays open for a moment after the last step, and the page doesn't scroll. */
-  let volAcc = 0, volShowT = 0;
+  /* scroll on the volume button or slider: smooth, not in steps. Each wheel / trackpad movement moves a target in
+     proportion to how far it scrolled (a big jump from one event is capped); the volume glides to the target, a bit
+     each frame (it eases in, like a fader). During the glide the video's own volume is set directly (in fractions of
+     a percent, so it doesn't step); YouTube Music's slider gets the final value once the glide settles, so its state
+     (kept for the next song) stays right. The slider stays open for a moment after, and the page doesn't scroll. */
+  const VOL_PER_PX = .08;                    // % of volume per pixel scrolled (a mouse wheel notch is ~100px: 8%)
+  const VOL_MAX_EVENT = 160;                 // px: one event can't move it more than this (some mice send 240+)
+  const VOL_GLIDE_MS = 90;                   // the time constant of the glide (about 3x this to settle)
+  let volShowT = 0, volTarget = null, volCur = null, volRaf = 0, volLastT = 0;
+  const volNow = () => volCur !== null ? Math.round(volCur) : getVolume();     // the % shown (mid-glide too)
+  const volGlide = now => {
+    const dt = Math.min(64, now - volLastT);
+    volLastT = now;
+    volCur += (volTarget - volCur) * (1 - Math.exp(-dt / VOL_GLIDE_MS));
+    const v = video();
+    if (Math.abs(volTarget - volCur) < .05) {
+      volCur = null;
+      volRaf = 0;
+      setVolume(Math.round(volTarget));                  // settled: YTM's own slider and state
+      volRange.value = String(Math.round(volTarget));
+      volTarget = null;
+      showVolPct();
+      return;
+    }
+    if (v) v.volume = Math.max(0, Math.min(1, volCur / 100));
+    volRange.value = String(volCur);
+    showVolPct();
+    volRaf = requestAnimationFrame(volGlide);
+  };
   volWrap.addEventListener('wheel', e => {
     e.preventDefault();
     e.stopPropagation();
-    const d = (e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY) || -e.deltaX;
-    if (Math.sign(d) !== Math.sign(volAcc)) volAcc = 0;
-    volAcc += d;
-    const steps = Math.trunc(volAcc / 50);
-    if (steps) {
-      volAcc -= steps * 50;                                // keep the rest for the next step
-      const v = video();
-      if (v && v.muted && steps < 0) v.muted = false;     // scrolling up while muted: unmute first
-      const now = Math.round(getVolume() / 5) * 5;
-      const val = Math.max(0, Math.min(100, now - steps * 5));
-      setVolume(val);
-      volRange.value = String(val);
-    }
-    showVolPct();
+    let d = (e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY) || -e.deltaX;
+    d = Math.max(-VOL_MAX_EVENT, Math.min(VOL_MAX_EVENT, d));
+    // scrolling down turns it up (Bar & menus > Volume > Invert scroll: down turns it down)
+    const change = (settings.volInvert ? -d : d) * VOL_PER_PX;
+    const v = video();
+    if (volTarget === null) volTarget = volCur = getVolume();
+    if (v && v.muted && change > 0) v.muted = false;     // turning it up while muted: unmute first
+    volTarget = Math.max(0, Math.min(100, volTarget + change));
+    if (!volRaf) { volLastT = performance.now(); volRaf = requestAnimationFrame(volGlide); }
     volWrap.classList.add('am-vol-on');
     clearTimeout(volShowT);
     volShowT = setTimeout(() => volWrap.classList.remove('am-vol-on'), 1200);
@@ -1526,29 +1559,43 @@
   // the rail's own CSS border is. (An SVG clip to keep a wider line inside did not work on YouTube Music's page.)
   // sides (the outline only): a docked rail has its border on some sides only, and square corners. Then the outline
   // is open: only those sides, plus the strip.
-  const shapePath = (g, w, h, r, rc, e = 0, sides = null) => {
+  // The path is drawn in the shape's own frame: x = out from the bar's outer edge (0 .. Wr is the bar, past Wr the
+  // strips), y = along the edge (0 .. rb). g.map turns a point into the box's pixels (left rail: as is; right rail:
+  // mirrored; peek.js maps it onto a bottom / top bar too), g.flip says whether that map mirrors (arcs turn the
+  // other way). Strips: { cy, w, h, r, rc }, any number, each one bulging out of the inner edge at cy. A strip too
+  // close to the one before it (their joins would cross) is left out. flowExtra (peek.js): more strips for the rail.
+  let flowExtra = null;
+  const flowPath = (g, strips, e = 0, sides = null) => {
     const { Wr, rb, R } = g, rt = 0;
-    const py0 = g.cy - h / 2, py1 = g.cy + h / 2;
-    r = Math.max(0, Math.min(r, w / 2, py0 - rt - R, rb - R - py1));     // the joins stay clear of the rail's corners
-    rc = Math.max(0, Math.min(rc, w - r, h / 2));
-    const X = x => (g.right ? g.boxW - x : x).toFixed(2), Y = y => y.toFixed(2);
-    const A = (rad, sweep, x, y) => { rad = Math.max(0, rad).toFixed(2); return `A${rad} ${rad} 0 0 ${g.right ? 1 - sweep : sweep} ${X(x)} ${Y(y)}`; };
-    const rail = `M${X(e)} ${Y(rt + R)} ${A(R - e, 1, R, rt + e)} L${X(Wr - R)} ${Y(rt + e)} ${A(R - e, 1, Wr - e, rt + R)} `;
-    const end = `L${X(Wr - e)} ${Y(rb - R)} ${A(R - e, 1, Wr - R, rb - e)} L${X(R)} ${Y(rb - e)} ${A(R - e, 1, e, rb - R)} Z`;
-    const strip = w < 2 * e + 1 ? '' :                     // no strip yet: the rail alone
-      `L${X(Wr - e)} ${Y(py0 - r)} ${A(r + e, 0, Wr + r, py0 + e)} L${X(Wr + w - rc)} ${Y(py0 + e)} ${A(rc - e, 1, Wr + w - e, py0 + rc)} ` +
-      `L${X(Wr + w - e)} ${Y(py1 - rc)} ${A(rc - e, 1, Wr + w - rc, py1 - e)} L${X(Wr + r)} ${Y(py1 - e)} ${A(r + e, 0, Wr - e, py1 + r)} `;
+    const P = (x, y) => { const [a, b] = g.map(x, y); return a.toFixed(2) + ' ' + b.toFixed(2); };
+    const A = (rad, sweep, x, y) => { rad = Math.max(0, rad).toFixed(2); return `A${rad} ${rad} 0 0 ${g.flip ? 1 - sweep : sweep} ${P(x, y)}`; };
+    let strip = '', prev = -Infinity;                     // the low end of the strip before (with its join)
+    for (const st of strips.filter(Boolean).sort((a, b) => a.cy - b.cy)) {
+      const w = st.w, h = st.h, py0 = st.cy - h / 2, py1 = st.cy + h / 2;
+      if (w < 2 * e + 1) continue;                         // no strip yet
+      let r = Math.max(0, Math.min(st.r, w / 2, py0 - rt - R, rb - R - py1));     // the joins stay clear of the rail's corners
+      if (py0 - r < prev) continue;                        // would run into the strip before it
+      const rc = Math.max(0, Math.min(st.rc, w - r, h / 2));
+      strip += `L${P(Wr - e, py0 - r)} ${A(r + e, 0, Wr + r, py0 + e)} L${P(Wr + w - rc, py0 + e)} ${A(rc - e, 1, Wr + w - e, py0 + rc)} ` +
+        `L${P(Wr + w - e, py1 - rc)} ${A(rc - e, 1, Wr + w - rc, py1 - e)} L${P(Wr + r, py1 - e)} ${A(r + e, 0, Wr - e, py1 + r)} `;
+      prev = py1 + r;
+    }
+    const rail = `M${P(e, rt + R)} ${A(R - e, 1, R, rt + e)} L${P(Wr - R, rt + e)} ${A(R - e, 1, Wr - e, rt + R)} `;
+    const end = `L${P(Wr - e, rb - R)} ${A(R - e, 1, Wr - R, rb - e)} L${P(R, rb - e)} ${A(R - e, 1, e, rb - R)} Z`;
     if (!sides) return rail + strip + end;
     // open outline: each side a 1px line; where two meet, the corner pixel belongs to one of them only
     const { top, bottom, outer, inner } = sides;
     let d = '';
-    if (top) d += `M${X(outer ? 1 : 0)} ${Y(e)} L${X(Wr - (inner ? 1 : 0))} ${Y(e)} `;
-    if (bottom) d += `M${X(outer ? 1 : 0)} ${Y(rb - e)} L${X(Wr - (inner ? 1 : 0))} ${Y(rb - e)} `;
-    if (outer) d += `M${X(e)} ${Y(0)} L${X(e)} ${Y(rb)} `;
-    if (inner) d += `M${X(Wr - e)} ${Y(top ? 1 : 0)} ${strip}L${X(Wr - e)} ${Y(rb - (bottom ? 1 : 0))}`;
+    if (top) d += `M${P(outer ? 1 : 0, e)} L${P(Wr - (inner ? 1 : 0), e)} `;
+    if (bottom) d += `M${P(outer ? 1 : 0, rb - e)} L${P(Wr - (inner ? 1 : 0), rb - e)} `;
+    if (outer) d += `M${P(e, 0)} L${P(e, rb)} `;
+    if (inner) d += `M${P(Wr - e, top ? 1 : 0)} ${strip}L${P(Wr - e, rb - (bottom ? 1 : 0))}`;
     else if (strip) d += strip.replace(/^L/, 'M');
     return d;
   };
+  // the rail + the tape's strip (and peek.js's strip, if any)
+  const shapePath = (g, w, h, r, rc, e = 0, sides = null) =>
+    flowPath(g, [{ cy: g.cy, w, h, r, rc }].concat(flowExtra ? flowExtra(g) : []), e, sides);
   /* the rope. The outline is a rope wound around a rounded square (box: x, y, size s, corner r) that doesn't turn,
      like a pulley that is fixed. Its free end leaves the square's low edge at D, going toward the page; pulling it
      drags the rest of the rope around the square and off at D, so the wound part gets shorter from its far end.
@@ -1637,7 +1684,8 @@
     // the sides with a border (all of them unless docked)
     const bw = k => parseFloat(cs['border' + k + 'Width']) > 0;
     const sides = { top: bw('Top'), bottom: bw('Bottom'), outer: bw(right ? 'Right' : 'Left'), inner: bw(right ? 'Left' : 'Right') };
-    const g = { right, Wr, R, boxW, rb: br.height, W: FLY_W, H, h0: 18, cy,
+    const g = { right, Wr, R, boxW, rb: br.height, W: FLY_W, H, h0: 18, cy, flip: right,
+      map: right ? (x, y) => [boxW - x, y] : (x, y) => [x, y],
       sides: sides.top && sides.bottom && sides.outer && sides.inner ? null : sides,
       shadow: !!settings.barFloat };                          // a docked rail has no shadow
     const box = { left: (right ? br.right - boxW : br.left) + 'px', top: br.top + 'px', width: boxW + 'px', height: br.height + 'px' };
@@ -1817,6 +1865,15 @@
       note: () => "Off: the bar fills the width and sits on the edge of the window, like YouTube Music's own" },
     { group: 'Bar & menus', sub: 'Size & position', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
       note: () => 'Grows when you point at it, easier to drag' },
+    // peek.js, autohide.js
+    { group: 'Bar & menus', sub: 'Behavior', key: 'peek', type: 'toggle', label: 'Up-next peek', min: 0, max: 1, def: 1,
+      note: () => 'Point at the next button to see the next song' },
+    { group: 'Bar & menus', sub: 'Behavior', key: 'autoHide', type: 'toggle', label: 'Auto-hide', min: 0, max: 1, def: 0,
+      note: () => 'The bar hides when you are not using it, and comes back when you point near it. Not on phones' },
+    { group: 'Bar & menus', sub: 'Behavior', key: 'autoHideDelay', type: 'choice', label: 'Hide after',
+      options: [['2 s', 2], ['4 s', 4], ['8 s', 8]], min: 2, max: 8, def: 4, dep: 'autoHide' },
+    { group: 'Bar & menus', sub: 'Behavior', key: 'autoHideSong', type: 'toggle', label: 'Show on a new song', min: 0, max: 1, def: 1,
+      dep: 'autoHide', note: () => 'For a few seconds' },
     // playback speed (syncSpeed below). Kept in % so the steps stay whole numbers; shown as 1.25×
     { group: 'Playback', sub: 'Speed', key: 'speed', label: 'Speed', min: 50, max: 200, step: 5, def: 100, unit: '%',
       fmt: v => fmtSpeed(v / 100) },
@@ -1831,6 +1888,19 @@
       note: () => 'A short list of the changes, once per new version' },
     { group: 'Misc', sub: 'Updates', key: 'whatsNewOpen', type: 'action', label: "What's new", button: 'Open',
       min: 0, max: 0, def: 0, run: () => openChangelog('all'), note: () => 'Every version so far' },
+    // title-links.js: the volume control (shown in Bar & menus, after Behavior)
+    { group: 'Bar & menus', sub: 'Volume', key: 'volPct', type: 'toggle', label: 'Show volume %', min: 0, max: 1, def: 0,
+      note: () => 'Next to the volume slider while it is open' },
+    { group: 'Bar & menus', sub: 'Volume', key: 'volInvert', type: 'toggle', label: 'Invert scroll', min: 0, max: 1, def: 0,
+      note: () => 'Scroll on the volume button: off, down turns it up; on, down turns it down' },
+    // share.js: the format "Copy link" uses (the others are one click further in the menu)
+    { group: 'Misc', sub: 'Sharing', key: 'copyFormat', type: 'choice', label: 'Copy link as',
+      options: [['YouTube', 0], ['YT Music', 1], ['Short', 2], ['Koutube', 3], ['Markdown', 4]], min: 0, max: 4, def: 0,
+      note: () => 'YouTube plays in Discord. Koutube: richer preview, third-party' },
+    // prompts.js: press "Switch" on YTM's false "Listen on this device?" prompt
+    { group: 'Playback', sub: 'YouTube Music prompts', key: 'autoSwitch', type: 'toggle', label: 'Switch to this device automatically',
+      min: 0, max: 1, def: 0, change: () => syncPromptWatch(),
+      note: () => 'Answers “Listen on this device?” with Switch. If someone else really uses your account, this stops their music' },
     // backup.js: one file with every setting, to move them to another browser or device
     { group: 'Misc', sub: 'Backup', key: 'backupExport', type: 'action', label: 'Export settings', button: 'Export',
       min: 0, max: 0, def: 0, run: (b, note) => exportSettings(note),
@@ -1875,6 +1945,8 @@
     // how this panel looks: categories on the side (1, Modern) or the original long list (0, Legacy). No group: it is
     // the switch in the panel's footer, not a row
     { key: 'setLayout', min: 0, max: 1, def: 1 },
+    // share.js: the Koutube notice was answered with "Don't show this again"
+    { key: 'koutubeOk', min: 0, max: 1, def: 0 },
   ];
   // A row's group is its category (a page in the Modern layout); sub splits a category into cards with a small
   // heading. Rows are gathered by group and sub wherever they are in the list, so order only matters inside a card.
@@ -2022,6 +2094,7 @@
     if (setVars.textContent !== css) setVars.textContent = css;
     syncSpeed();
     document.documentElement.classList.toggle('am-easy-track', !!settings.easyTrack);
+    document.documentElement.classList.toggle('am-show-volpct', !!settings.volPct);
     document.documentElement.classList.toggle('am-dock', !settings.barFloat);
     applyRefraction();
   };
@@ -2197,6 +2270,7 @@
     const showSeg = () => segBtns.forEach(([b, m]) => b.classList.toggle('am-on', layoutNow === m));
     showSeg();
     const lookRefresh = buildLookSettings(p);      // Font + Background groups
+    const keysRefresh = buildKeySettings(p);       // Shortcuts (keys.js)
     addGroups(SETTINGS.filter(s => LATE_GROUPS.includes(s.group)));
     showDeps();
 
@@ -2221,6 +2295,8 @@
       applyFont();
       applyBg();
       lookRefresh();
+      resetKeys();
+      keysRefresh();
       if (settings.setLayout !== wasLayout) rebuildSettings();
     });
     // the panel's own layout, between Reset and Done
@@ -4973,6 +5049,18 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.4', date: '2026-11-14', title: 'Links for Discord, shortcuts and a command palette', items: [
+      'Share in the 3-dot menus opens a small popup of links: YouTube (plays inline in Discord), YouTube Music, short, Koutube (a richer Discord preview, through a third-party service) and Markdown, plus More for YouTube Music\'s own share options. “Start at” makes the link start where you are in the song',
+      'Shortcuts: Ctrl+K opens a command palette for every action and setting. Change any key in Settings > Shortcuts',
+      'YouTube Music\'s own pop-up notices now show as r1ytm\'s note at the bar (with their Undo button). A like just gives the heart a small bounce',
+      'Volume: scrolling on the volume button glides smoothly; down turns it up (Bar & menus > Volume > Invert scroll for the other way). The volume % is off by default (Bar & menus > Volume)',
+      'L likes the song playing now',
+      'Auto-hide works on the left / right rail, and the What\'s new text is bigger',
+      'Up-next peek: point at the next button and the bar flows out to show the next song, like the tape on the rail',
+      'Auto-hide (Bar & menus > Behavior): the bar hides when you are not using it and comes back when you point near it',
+      'Optional: answer YouTube Music\'s false “Listen on this device?” prompt with Switch automatically (Playback)',
+      'With the bar on the left or right, the 3-dot menu opens centered on the bar',
+    ] },
     { v: '1.9.3', date: '2026-11-12', title: 'Speed, volume and a settings backup', items: [
       'Possibly fixed: the progress bar and the time sometimes counted the songs before this one, after a new song started. If it still happens, please report it on GitHub: github.com/R1ftzy/r1ytm-player/issues',
       'Speed: 0.5× to 2× in Playback settings or in the 3-dot menu. Turn off Keep pitch for a nightcore / slowed sound. The 3-dot button shows the speed while it is not 1×',
@@ -5118,16 +5206,16 @@
   const clStyle = el('style', null, document.head);
   clStyle.textContent = `
     .am-cl-back { z-index: 100004; }
-    .am-set.am-cl { width: min(460px, 100%); display: flex; flex-direction: column; }
+    .am-set.am-cl { width: min(540px, 100%); display: flex; flex-direction: column; }
     .am-cl-list { overflow-y: auto; min-height: 0; margin: 0 -4px; padding: 0 4px; scrollbar-width: thin; }
-    .am-cl-ver { padding: 12px 14px; border-radius: 14px; background: rgb(255 255 255 / .06); }
+    .am-cl-ver { padding: 14px 16px; border-radius: 14px; background: rgb(255 255 255 / .06); }
     .am-cl-ver + .am-cl-ver { margin-top: 8px; }
     .am-cl-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-    .am-cl-v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
-    .am-cl-date { font-size: 12px; color: rgb(255 255 255 / .45); font-variant-numeric: tabular-nums; }
-    .am-cl-title { font-size: 13.5px; font-weight: 600; margin-top: 4px; color: rgb(255 255 255 / .85); }
-    .am-cl-items { margin: 8px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.45; color: rgb(255 255 255 / .75); }
-    .am-cl-items li + li { margin-top: 4px; }
+    .am-cl-v { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .am-cl-date { font-size: 13px; color: rgb(255 255 255 / .45); font-variant-numeric: tabular-nums; }
+    .am-cl-title { font-size: 15px; font-weight: 600; margin-top: 4px; color: rgb(255 255 255 / .85); }
+    .am-cl-items { margin: 8px 0 0; padding-left: 20px; font-size: 14.5px; line-height: 1.5; color: rgb(255 255 255 / .8); }
+    .am-cl-items li + li { margin-top: 6px; }
     .am-cl-items li::marker { color: rgb(255 255 255 / .35); }
     .am-cl-more { display: flex; justify-content: center; margin-top: 10px; }
     .am-cl-opt { margin-top: 12px; }
@@ -5207,6 +5295,7 @@
         layout: layoutNow,
         look: JSON.parse(JSON.stringify(look)),
         zenMinutes: zenMins(),
+        keys: Object.assign({}, keys),
         files,
       };
       const name = 'r1ytm-settings-' + new Date().toISOString().slice(0, 10) + '.json';
@@ -5255,13 +5344,21 @@
       }
     }
     const zm = Number(d.zenMinutes);
+    // shortcuts: only known actions, each a key combination or '' (none); anything else is left out
+    const ks = {};
+    if (d.keys && typeof d.keys === 'object') {
+      for (const a of ACTIONS) {
+        const v = d.keys[a.id];
+        if (typeof v === 'string' && /^((Ctrl|Alt|Shift|Meta)\+)*[A-Za-z0-9]*$/.test(v)) ks[a.id] = v;
+      }
+    }
     const files = {};
     if (d.files && typeof d.files === 'object') {
       for (const k of BACKUP_FILES) if (d.files[k]) {
         try { files[k] = unpackFile(d.files[k]); } catch (e) { throw new Error((e && e.message) || 'a file in it is damaged'); }
       }
     }
-    return { settings: s, layout, look: lk, zenMinutes: Number.isFinite(zm) ? zm : null, files };
+    return { settings: s, layout, look: lk, zenMinutes: Number.isFinite(zm) ? zm : null, keys: ks, files };
   };
 
   const importSettings = note => ui.file('.json,application/json', async f => {
@@ -5288,6 +5385,9 @@
       applyBanner();
       applyArtist();
       if (b.zenMinutes !== null) store.set(ZEN_MIN_KEY, String(b.zenMinutes));
+      for (const k of Object.keys(keys)) delete keys[k];
+      Object.assign(keys, b.keys);
+      saveKeys();
       // the panel built again with the new values; the note says it worked
       if (setEl) { backupMsg = 'Imported ' + f.name; rebuildSettings(); }
       else say('Imported ' + f.name);
@@ -5296,10 +5396,937 @@
       say('Not imported: ' + ((e && e.message) || e) + '. Nothing was changed');
     }
   });
+  /* ---------- share: copy links that embed well (Discord and others), and a small note ("toast") at the bar ---------- */
+  // A music.youtube.com link shows a poor preview in Discord. A www.youtube.com link plays inline there, and Koutube
+  // (koutube.com, a third-party service) shows a richer preview: https://github.com/iGerman00/koutube
+  // "Copy link" is in the bar's 3-dot menu and in YTM's song-row menus (songs, albums, playlists, artists).
+
+  /* the toast: one line of text on the page side of the bar, for a moment */
+  const toastEl = el('div', 'am-toast');
+  toastEl.setAttribute('role', 'status');
+  let toastT = 0;
+  // act: { label, run } adds a button (e.g. YTM's "Undo"); the toast then stays longer and that button can be clicked
+  const toast = (text, act) => {
+    toastEl.textContent = text;
+    if (act && act.label) {
+      const b = el('button', 'am-toast-act', toastEl);
+      b.textContent = act.label;
+      b.addEventListener('click', e => { e.stopPropagation(); act.run(); toastEl.classList.remove('am-toast-in'); toastEl.classList.add('am-toast-out'); });
+    }
+    if (!toastEl.isConnected) document.body.append(toastEl);
+    const e = barEdge();
+    toastEl.style.cssText = '';
+    if (!e || isMobile()) { toastEl.style.left = '50%'; toastEl.style.bottom = '24px'; toastEl.style.translate = '-50% 0'; }
+    else if (e.side === 'bottom' || e.side === 'top') {
+      const r = bar.getBoundingClientRect();
+      toastEl.style.left = (r.left + r.width / 2) + 'px';
+      toastEl.style.translate = '-50% 0';
+      if (e.side === 'bottom') toastEl.style.bottom = (innerHeight - e.at + 10) + 'px'; else toastEl.style.top = (e.at + 10) + 'px';
+    } else {
+      toastEl.style.top = '50%';
+      toastEl.style.translate = '0 -50%';
+      if (e.side === 'left') toastEl.style.left = (e.at + 10) + 'px'; else toastEl.style.right = (innerWidth - e.at + 10) + 'px';
+    }
+    toastEl.classList.remove('am-toast-out');
+    toastEl.classList.add('am-toast-in');
+    clearTimeout(toastT);
+    toastT = setTimeout(() => { toastEl.classList.remove('am-toast-in'); toastEl.classList.add('am-toast-out'); }, act ? 4500 : 1800);
+  };
+
+  /* YouTube Music's own toasts ("Saved to liked music", "Added to queue"...) are hidden. A like gets a small bounce of
+     the heart instead; any other one is shown as our toast at the bar, with its button if it has one ("Undo"). */
+  const bounceHeart = () => {
+    likeBtn.classList.remove('am-bounce');
+    void likeBtn.offsetWidth;                  // restart the animation
+    likeBtn.classList.add('am-bounce');
+  };
+  let ytToastKey = '';
+  const syncYtToast = () => {
+    const t = [...document.querySelectorAll('tp-yt-paper-toast')].find(n => n.classList.contains('paper-toast-open') || n.opened);
+    if (!t) { ytToastKey = ''; return; }
+    const tx = n => n ? n.textContent.trim().replace(/\s+/g, ' ') : '';
+    const text = [tx(t.querySelector('#text')), tx(t.querySelector('#sub-text'))].filter(Boolean).join(' · ') || tx(t.querySelector('#label'));
+    if (!text || text === ytToastKey) return;
+    ytToastKey = text;
+    if (performance.now() - lastLikeAt < 4000) return;            // a like: the heart's bounce says it
+    const ab = t.querySelector('#action-button button, #action-button tp-yt-paper-button');
+    const label = ab && !ab.closest('[hidden]') ? tx(ab) : '';
+    toast(text, label ? { label, run: () => ab.click() } : null);
+  };
+
+  /* the clipboard: the async API (works inside a click or a key press), else the old copy command */
+  const copyText = async text => {
+    try { await navigator.clipboard.writeText(text); return true; } catch {}
+    const t = el('textarea');
+    t.value = text;
+    t.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+    document.body.append(t);
+    t.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch {}
+    t.remove();
+    return ok;
+  };
+
+  /* what a link points at: { kind: 'song' | 'playlist' | 'album' | 'artist', id, list?, title, sub }
+     song: id = the video id. playlist: id = the list id. album: id = the MPRE browse id, list = its OLAK5uy… playlist
+     (YouTube has no album pages, so the YouTube link opens the album as a playlist). artist: id = the UC… channel id. */
+  const deepFind = (o, test, depth = 0) => {
+    if (!o || typeof o !== 'object' || depth > 14) return null;
+    for (const k of Object.keys(o)) {
+      const v = o[k];
+      if (typeof v === 'string' && test(k, v)) return v;
+      if (v && typeof v === 'object') { const r = deepFind(v, test, depth + 1); if (r) return r; }
+    }
+    return null;
+  };
+  const albumList = o => deepFind(o, (k, v) => k === 'playlistId' && /^OLAK5uy_/.test(v));
+  // from a navigation endpoint (YTM's data for a link)
+  const fromEndpoint = (ep, data) => {
+    if (!ep) return null;
+    const w = ep.watchEndpoint, b = ep.browseEndpoint, wp = ep.watchPlaylistEndpoint;
+    if (w && w.videoId) return { kind: 'song', id: w.videoId };
+    if (wp && wp.playlistId) return { kind: 'playlist', id: wp.playlistId };
+    if (b && b.browseId) {
+      const id = b.browseId;
+      if (/^MPRE/.test(id)) return { kind: 'album', id, list: albumList(data) };
+      if (/^VL/.test(id)) return { kind: 'playlist', id: id.slice(2) };
+      if (/^UC/.test(id)) return { kind: 'artist', id };
+    }
+    return null;
+  };
+  const runText = t => t ? (t.runs ? t.runs.map(r => r.text).join('') : t.simpleText || '') : '';
+  // the target of a song row / card / queue item, from YTM's data on it (links first, they say what the row opens)
+  const rowTarget = row => {
+    const d = row && row.data;
+    if (!d) return null;
+    const title = runText(d.title) ||
+      runText(((d.flexColumns || [])[0] || {}).musicResponsiveListItemFlexColumnRenderer && d.flexColumns[0].musicResponsiveListItemFlexColumnRenderer.text);
+    const sub = runText(d.shortBylineText || d.longBylineText || d.subtitle) ||
+      runText(((d.flexColumns || [])[1] || {}).musicResponsiveListItemFlexColumnRenderer && d.flexColumns[1].musicResponsiveListItemFlexColumnRenderer.text);
+    let t = null;
+    if (d.videoId) t = { kind: 'song', id: d.videoId };
+    if (!t) {
+      const fc0 = d.flexColumns && d.flexColumns[0] && d.flexColumns[0].musicResponsiveListItemFlexColumnRenderer;
+      const run0 = fc0 && fc0.text && fc0.text.runs && fc0.text.runs[0];
+      t = fromEndpoint(run0 && run0.navigationEndpoint, d) || fromEndpoint(d.navigationEndpoint, d) ||
+        fromEndpoint(d.title && d.title.runs && d.title.runs[0] && d.title.runs[0].navigationEndpoint, d);
+    }
+    if (!t && d.playlistItemData && d.playlistItemData.videoId) t = { kind: 'song', id: d.playlistItemData.videoId };
+    if (!t) return null;
+    return Object.assign(t, { title: title.trim(), sub: sub.trim() });
+  };
+  // a page header (album / playlist / artist page): from the address, with the album's playlist from the header data
+  const pageTarget = header => {
+    const p = location.pathname, qs = new URLSearchParams(location.search);
+    const title = (document.title || '').replace(/\s*-\s*YouTube Music\s*$/, '');
+    if (p === '/playlist' && qs.get('list')) return { kind: 'playlist', id: qs.get('list'), title, sub: '' };
+    let m = p.match(/^\/browse\/(MPRE[\w-]+)/);
+    if (m) return { kind: 'album', id: m[1], list: albumList(header && header.data) || albumList(document.querySelector('ytmusic-browse-response') && document.querySelector('ytmusic-browse-response').data), title, sub: '' };
+    m = p.match(/^\/(?:channel|browse)\/(UC[\w-]+)/);
+    if (m) return { kind: 'artist', id: m[1], title, sub: '' };
+    return null;
+  };
+  // the target of one of YTM's menus, from the button (or right-click) that opened it
+  const menuTarget = node => {
+    const row = node && node.closest && node.closest(ROWS);
+    if (!row) return null;
+    if (/header|card-shelf/.test(row.tagName.toLowerCase())) return pageTarget(row) || rowTarget(row);
+    return rowTarget(row);
+  };
+  // the song playing now (the bar's own menu)
+  const nowTarget = () => {
+    const id = curVideoId();
+    if (!id) return null;
+    const m = navigator.mediaSession.metadata;
+    return { kind: 'song', id, title: (m && m.title) || '', sub: (m && m.artist) || '', img: art.src || '' };
+  };
+
+  /* the formats. at: seconds to start at (songs only), or 0 */
+  const COPY_FORMATS = [
+    { key: 'youtube', label: 'YouTube', note: 'Plays in Discord' },
+    { key: 'music', label: 'YouTube Music', note: 'music.youtube.com' },
+    { key: 'short', label: 'Short link', note: 'youtu.be' },
+    { key: 'koutube', label: 'Koutube', note: 'Richer preview' },
+    { key: 'markdown', label: 'Markdown', note: '[Title](link)' },
+  ];
+  const linkFor = (t, fmt, at = 0) => {
+    const id = encodeURIComponent(t.id);
+    const tq = at > 0 ? Math.floor(at) : 0;
+    if (fmt === 'markdown') {
+      const name = [t.title, t.sub].filter(Boolean).join(' – ').replace(/[[\]]/g, '') || 'Link';
+      return `[${name}](${linkFor(t, 'youtube', at)})`;
+    }
+    if (t.kind === 'song') {
+      const time = (sep) => tq ? `${sep}t=${tq}` : '';
+      if (fmt === 'music') return `https://music.youtube.com/watch?v=${id}${time('&')}`;
+      if (fmt === 'short') return `https://youtu.be/${id}${time('?')}`;
+      if (fmt === 'koutube') return `https://music.koutube.com/watch?v=${id}${time('&')}`;
+      return `https://www.youtube.com/watch?v=${id}${time('&')}`;
+    }
+    if (t.kind === 'playlist') {
+      if (fmt === 'music') return `https://music.youtube.com/playlist?list=${id}`;
+      if (fmt === 'koutube') return `https://music.koutube.com/playlist?list=${id}`;
+      return `https://www.youtube.com/playlist?list=${id}`;
+    }
+    if (t.kind === 'album') {
+      const list = t.list ? encodeURIComponent(t.list) : '';
+      if (fmt === 'music' || !list) return `https://music.youtube.com/browse/${id}`;
+      if (fmt === 'koutube') return `https://music.koutube.com/playlist?list=${list}`;
+      return `https://www.youtube.com/playlist?list=${list}`;
+    }
+    if (t.kind === 'artist') {
+      if (fmt === 'music') return `https://music.youtube.com/channel/${id}`;
+      if (fmt === 'koutube') return `https://koutube.com/channel/${id}`;
+      return `https://www.youtube.com/channel/${id}`;
+    }
+    return '';
+  };
+  const defaultFormat = () => (COPY_FORMATS[settings.copyFormat] || COPY_FORMATS[0]).key;
+  const copyLink = async (t, fmt = defaultFormat(), at = 0) => {
+    const link = t && linkFor(t, fmt, at);
+    if (!link) { toast('No link for this'); return false; }
+    // the first Koutube link: say it is a third-party service first (until "Don't show this again")
+    if (fmt === 'koutube' && !settings.koutubeOk) return koutubeNotice(() => copyLink(t, fmt, at));
+    const ok = await copyText(link);
+    toast(ok ? 'Link copied' + (fmt === 'youtube' || fmt === 'markdown' ? '' : ' (' + (COPY_FORMATS.find(f => f.key === fmt) || {}).label + ')') : 'Could not copy the link');
+    return ok;
+  };
+  /* the Koutube notice: a small dialog with the same look as the settings. Copy (inside its click, so the clipboard
+     works) or Cancel; "Don't show this again" is kept in the settings (koutubeOk) */
+  const KOUTUBE_REPO = 'https://github.com/iGerman00/koutube';
+  let kNoticeEl = null;
+  const koutubeNotice = onCopy => new Promise(res => {
+    if (kNoticeEl) { res(false); return; }
+    closeMenu();
+    const back = el('div', 'am-set-back am-kn-back', document.body);
+    const p = el('div', 'am-set am-kn', back);
+    p.setAttribute('role', 'dialog');
+    p.setAttribute('aria-label', 'Koutube link');
+    const head = el('div', 'am-set-head', p);
+    const ic = el('div', 'am-kn-icon', head);
+    ic.append(svg(FORMAT_ICONS.koutube));
+    el('div', 'am-set-title', el('div', 'am-set-htext', head)).textContent = 'Koutube link';
+    const tx = el('div', 'am-kn-text', p);
+    tx.append('Koutube is a third-party service, not part of r1ytm or YouTube. It makes the link show a richer preview in Discord. Anyone who opens the link connects to Koutube. ');
+    const a = el('a', 'am-kn-link', tx);
+    a.href = KOUTUBE_REPO;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = 'Koutube on GitHub';
+    const lab = el('label', 'am-kn-check', p);
+    const cb = el('input', null, lab);
+    cb.type = 'checkbox';
+    lab.append("Don't show this again");
+    const foot = el('div', 'am-set-foot', p);
+    const cancel = el('button', 'am-set-btn', foot);
+    cancel.textContent = 'Cancel';
+    const ok = el('button', 'am-set-btn am-set-primary', foot);
+    ok.textContent = 'Copy link';
+    const close = r => {
+      if (!kNoticeEl) return;
+      kNoticeEl = null;
+      back.classList.add('am-set-out');
+      setTimeout(() => back.remove(), 180);
+      res(r);
+    };
+    ok.addEventListener('click', () => {
+      if (cb.checked) { settings.koutubeOk = 1; saveSettings(); }
+      close(true);
+      onCopy();
+    });
+    cancel.addEventListener('click', () => close(false));
+    back.addEventListener('click', e => { if (e.target === back) close(false); });
+    back.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Escape') close(false); });
+    kNoticeEl = back;
+    ok.focus({ preventScroll: true });
+  });
+
+  // the shortcut / command: the song playing now, in the default format
+  const copyNowLink = () => copyLink(nowTarget());
+
+  /* the menu row "Copy link": a click swaps the menu for a small popup of its own, a grid of icons, one per format
+     (and "at <time>" for the song playing now), where the menu was. It stays on screen and scrolls if it must. */
+  const P_LINK = 'M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z';
+  const FORMAT_ICONS = {
+    youtube: 'M21.58 7.19a2.5 2.5 0 00-1.77-1.77C18.25 5 12 5 12 5s-6.25 0-7.81.42a2.5 2.5 0 00-1.77 1.77C2 8.75 2 12 2 12s0 3.25.42 4.81a2.5 2.5 0 001.77 1.77C5.75 19 12 19 12 19s6.25 0 7.81-.42a2.5 2.5 0 001.77-1.77C22 15.25 22 12 22 12s0-3.25-.42-4.81zM10 15V9l5.2 3-5.2 3z',
+    music: 'M12 2a10 10 0 100 20 10 10 0 000-20zm0 3.5a6.5 6.5 0 110 13 6.5 6.5 0 010-13zM10 8.5v7l5.5-3.5L10 8.5z',
+    short: P_LINK,
+    // Koutube's links are for Discord: the Discord mark (Simple Icons, CC0)
+    koutube: 'M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z',
+    more: 'M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z',
+    markdown: 'M9.4 16.6 4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0 4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z',
+    time: 'M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16zm.5-13H11v6l5.2 3.2.8-1.3-4.5-2.7V7z',
+  };
+  // ytShare: YouTube Music's own share dialog (the "More" tile), when there is one
+  const openCopyPopup = (t, withTime, ytShare) => {
+    const old = menuEl, anchor = menuAnchor, trig = menuTrigger;
+    const r0 = old ? old.getBoundingClientRect() : bar.getBoundingClientRect();
+    closeMenu();
+    if (!t) { toast('No link for this'); return; }
+    // the song playing now: a "Start at <time>" switch under the grid (it applies to whichever link is copied), so
+    // the grid is always the five formats + More: 3 x 2
+    let at = 0;
+    const st = withTime && songTime();
+    const startAt = st && st.cur >= 1 ? Math.floor(st.cur) : 0;
+    const tiles = COPY_FORMATS.map(f => ({ svg: svg(FORMAT_ICONS[f.key]), label: f.label === 'YouTube Music' ? 'YT Music' : f.label,
+      run: () => copyLink(t, f.key, at) }));
+    if (ytShare) tiles.push({ svg: svg(FORMAT_ICONS.more), label: 'More', run: () => ytShare() });
+    const groups = [];
+    if (startAt) {
+      const row = { svg: svg(FORMAT_ICONS.time), label: 'Start at ' + mmss(startAt), keep: true };
+      let sw = null;
+      row.extra = b => { sw = el('span', 'am-set-switch am-menu-switch', b); };
+      row.run = () => { at = at ? 0 : startAt; sw.classList.toggle('am-on', !!at); row.el.setAttribute('aria-checked', String(!!at)); };
+      groups.push([row]);
+    }
+    const head = { title: 'Share', sub: [t.title, t.sub].filter(Boolean).join(' · '), img: t.img || '' };
+    const place = m => {
+      m.classList.add('am-copy-pop');
+      m.style.maxHeight = (innerHeight - 16) + 'px';
+      document.body.append(m);
+      // the layout size (the popup opens from 92%, so its rect is smaller for a moment)
+      const w = m.offsetWidth, h = m.offsetHeight;
+      const left = Math.max(8, Math.min(innerWidth - w - 8, r0.left + r0.width / 2 - w / 2));
+      const top = Math.max(8, Math.min(innerHeight - Math.min(h, innerHeight - 16) - 8, r0.top + r0.height / 2 - h / 2));
+      m.style.left = left + 'px';
+      m.style.top = top + 'px';
+      m.style.transformOrigin = 'center';
+    };
+    buildMenu(anchor || moreBtn, { tiles, groups }, head, place);
+    menuTrigger = trig;
+    const row = menuEl && menuEl.querySelector('.am-menu-tiles');
+    if (row) row.style.gridTemplateColumns = `repeat(${tiles.length > 4 ? 3 : tiles.length}, minmax(0, 1fr))`;
+    const swRow = menuEl && menuEl.querySelector('.am-menu-switch');
+    if (swRow) swRow.closest('.am-menu-item').setAttribute('role', 'menuitemcheckbox');
+  };
+
+  const shareStyle = el('style', null, document.head);
+  shareStyle.textContent = `
+    .am-toast { position: fixed; z-index: 100003; pointer-events: none; padding: 8px 14px; border-radius: 12px;
+      font: 500 13px/1.3 var(--am-font, "Switzer", "SF Pro", system-ui, sans-serif); color: #fff; white-space: nowrap;
+      background: rgb(34 34 36 / .82); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border: 1px solid rgb(255 255 255 / .12); box-shadow: 0 10px 30px rgb(0 0 0 / .4); opacity: 0; }
+    .am-toast.am-toast-in { animation: am-toast-in .22s cubic-bezier(.2, .9, .25, 1.05) forwards; }
+    .am-toast.am-toast-out { opacity: 1; animation: am-toast-out .25s ease forwards; }
+    @keyframes am-toast-in { from { opacity: 0; scale: .94; } to { opacity: 1; scale: 1; } }
+    @keyframes am-toast-out { to { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) { .am-toast.am-toast-in { animation: none; opacity: 1; } }
+    .am-copy-pop .am-menu-tiles { padding-bottom: 2px; }
+    /* the Start at switch: the settings' switch, at the end of its row; the row isn't a quiet (last) group here */
+    .am-menu-switch { margin-left: auto; pointer-events: none; scale: .85; }
+    .am-copy-pop .am-menu-quiet .am-menu-row { height: calc(36px * var(--am-ms)); font-size: calc(13.5px * var(--am-ms)); color: rgb(255 255 255 / .92); }
+    .am-kn-back { z-index: 100004; }
+    .am-set.am-kn { width: min(380px, 100%); }
+    .am-kn-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: #5865f2; }
+    .am-kn-icon svg { width: 20px; height: 20px; fill: #fff; }
+    .am-kn-text { font-size: 13.5px; line-height: 1.5; color: rgb(255 255 255 / .8); }
+    .am-kn-link { color: #fa586a; text-decoration: none; font-weight: 600; white-space: nowrap; }
+    .am-kn-link:hover { text-decoration: underline; }
+    .am-kn-check { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 13px; color: rgb(255 255 255 / .7); cursor: pointer; }
+    .am-kn-check input { accent-color: #fa586a; width: 15px; height: 15px; margin: 0; }
+    /* YTM's own toasts: ours instead (syncYtToast) */
+    tp-yt-paper-toast { display: none !important; }
+    .am-toast { display: flex; align-items: center; gap: 12px; }
+    .am-toast-act { all: unset; pointer-events: auto; cursor: pointer; font-weight: 600; color: #fa586a; padding: 2px 4px; border-radius: 6px; }
+    .am-toast-act:hover { background: rgb(255 255 255 / .1); }
+    @keyframes am-bounce { 0% { scale: 1; } 35% { scale: 1.12; } 65% { scale: .97; } 100% { scale: 1; } }
+    .am-like.am-bounce svg { animation: am-bounce .32s ease-out; }
+    @media (prefers-reduced-motion: reduce) { .am-like.am-bounce svg { animation: none; } }
+    .am-copy-pop .am-menu-tile .am-menu-label { white-space: nowrap; }
+  `;
+  /* ---------- YouTube Music prompts: auto-switch for "Listen on this device?" ---------- */
+  // YTM allows one device at a time on an account. It sometimes shows "Listen on this device? Your account is being
+  // used on another device" and pauses, although only this device plays. With the setting on, r1ytm presses "Switch"
+  // for you and shows a short note on the bar each time.
+  // Safety: a wrong click could stop music on a real other device, or worse, confirm some other dialog. So r1ytm only
+  // acts when the dialog's text matches this prompt AND it can tell the Switch button for sure (the confirm button of
+  // a two-button dialog, its text "Switch" or the confirm slot). Anything else: it does nothing and logs it.
+  // The text is checked in English only for now; amPromptProbe() records the dialog so other languages can be added.
+  const PROMPT_TEXT = [/listen on this device/i, /being used on another device/i, /account is being used/i];
+  const PROMPT_SWITCH = /^\s*(switch|listen here|play here)\s*$/i;
+  const promptLog = [];                       // the last auto-switches and skips, for amPromptProbe()
+  const dialogs = () => [...document.querySelectorAll('tp-yt-paper-dialog, ytmusic-popup-container [role="dialog"], yt-dialog-view-model')]
+    .filter(d => d.getClientRects().length && getComputedStyle(d).display !== 'none' && getComputedStyle(d).visibility !== 'hidden');
+  const btnText = b => (b.textContent || b.getAttribute('aria-label') || '').trim().replace(/\s+/g, ' ');
+  const dialogButtons = d => [...d.querySelectorAll('button, tp-yt-paper-button, yt-button-renderer, yt-button-view-model')]
+    .map(b => b.matches('button, tp-yt-paper-button') ? b : (b.querySelector('button, tp-yt-paper-button') || b))
+    .filter((b, i, a) => a.indexOf(b) === i && b.getClientRects().length && btnText(b));
+  // the Switch button of this prompt, or null when it isn't this prompt or the button isn't certain
+  const switchButton = d => {
+    const text = (d.innerText || d.textContent || '');
+    if (!PROMPT_TEXT.some(re => re.test(text))) return null;
+    const bs = dialogButtons(d);
+    if (bs.length !== 2) return null;
+    const byText = bs.filter(b => PROMPT_SWITCH.test(btnText(b)));
+    if (byText.length === 1) return byText[0];
+    // no English label: the confirm slot of YTM's confirm dialog
+    const conf = d.querySelector('#confirm-button button, #confirm-button tp-yt-paper-button, #confirm-button');
+    return conf && bs.includes(conf.matches('button, tp-yt-paper-button') ? conf : conf.querySelector('button, tp-yt-paper-button')) ? conf : null;
+  };
+  const describe = d => ({
+    tag: d.tagName.toLowerCase(), id: d.id, cls: typeof d.className === 'string' ? d.className : '',
+    text: (d.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 200),
+    buttons: dialogButtons(d).map(b => ({ text: btnText(b), slot: (b.closest('[id]') || {}).id || '', tag: b.tagName.toLowerCase() })),
+    renderers: [...new Set([...d.querySelectorAll('*')].map(n => n.tagName.toLowerCase()).filter(t => /renderer|view-model/.test(t)))].slice(0, 12),
+  });
+  let promptBusy = 0;
+  const checkPrompts = () => {
+    if (!settings.autoSwitch || performance.now() < promptBusy) return;
+    for (const d of dialogs()) {
+      const b = switchButton(d);
+      if (!b) continue;
+      promptBusy = performance.now() + 1500;          // one click per dialog; YTM needs a moment to close it
+      d.style.setProperty('opacity', '0', 'important'); // hidden first, so it doesn't flash
+      b.click();
+      promptLog.push({ at: new Date().toLocaleTimeString(), dialog: describe(d) });
+      if (promptLog.length > 10) promptLog.shift();
+      setTimeout(() => {
+        d.style.removeProperty('opacity');
+        const v = video();
+        if (v && v.paused) { const pp = yt('PlayPause'); if (pp) pp.click(); else v.play().catch(() => {}); }
+      }, 600);
+      toast('Switched to this device');
+      return;
+    }
+  };
+  // watch for dialogs as they open (no wait for the next tick), only while the setting is on
+  // (at most every 100 ms: YTM changes its page all the time); the sync loop checks too, also in zen
+  let promptQueued = false;
+  const promptObs = new MutationObserver(() => {
+    if (promptQueued) return;
+    promptQueued = true;
+    setTimeout(() => { promptQueued = false; checkPrompts(); }, 100);
+  });
+  const syncPromptWatch = () => {
+    promptObs.disconnect();
+    if (settings.autoSwitch) promptObs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['opened', 'aria-hidden'] });
+  };
+  syncPromptWatch();
+  // amPromptProbe(): the dialogs open now and the last auto-switches. Run it while the prompt is on screen and send the
+  // output: it shows how to recognize the prompt in other languages
+  window.amPromptProbe = () => {
+    const open = dialogs().map(d => Object.assign(describe(d), { wouldSwitch: !!switchButton(d) }));
+    console.log('[am-bar] prompts: setting ' + (settings.autoSwitch ? 'on' : 'off') + '. Open dialogs:', open, 'Last auto-switches:', promptLog);
+    return { open, log: promptLog.slice() };
+  };
+  /* ---------- up-next peek: point at the next button and the bar flows out to show the next song ---------- */
+  // The same motion as the rail's tape (title-links.js): a strip melts out of the bar's inner edge (toward the page),
+  // level with the next button, as one piece of glass with the bar: one shape, one outline, one shadow, no join.
+  // - The rail (left / right) already wears that shape all the time: the peek is a second strip of it (flowExtra).
+  // - Every other bar (bottom, top, the sidebar card) wears its own copy of the shape only while the peek is out:
+  //   the same path (flowPath), mapped onto that bar's side; the bar's own glass is off meanwhile (.am-skinned).
+  // The next song comes from YTM's queue (it is in the page even while the player page is closed): the item after
+  // the one marked "selected". YTM keeps the queue in play order, also with shuffle on. Repeat one: the same song.
+  const PEEK_DELAY_MS = 300, PEEK_OPEN_MS = 600, PEEK_CLOSE_MS = 380;
+  const PEEK_ALONG = 270, PEEK_OUT = 62;      // the strip: its size along the bar's edge, and how far it comes out
+  const PEEK_ALONG_RAIL = 64, PEEK_OUT_RAIL = 270;   // on a rail it comes out sideways: long out, short along
+
+  // the content: art, "Up next", title, artist; placed over the strip, faded in once the strip is out
+  const peekEl = el('div', 'am-peek');
+  peekEl.setAttribute('role', 'tooltip');
+  const peekArt = el('img', 'am-peek-art', peekEl);
+  peekArt.alt = '';
+  const peekText = el('div', 'am-peek-text', peekEl);
+  const peekHead = el('div', 'am-peek-head', peekText);
+  const peekTitle = el('div', 'am-peek-title', peekText);
+  const peekSub = el('div', 'am-peek-sub', peekText);
+  // the shape for bars that aren't a rail (the same classes as the tape's, so the same glass, outline and shadow)
+  const pFly = el('div', 'am-fly am-pfly', document.body);
+  const pEdge = mkSvg('am-fly-edge');
+  const pEdgeP = pEdge.firstChild;
+  const pShade = el('div', 'am-fly-shade', document.body);
+  const pShadeS = el('div', 'am-shade-s', el('div', 'am-shade-b', pShade));
+
+  let peekT = 0, peekOn = false, peekRaf = 0, peekWait = 0, peekG = null;
+
+  const queueItems = () => {
+    const page = playerPage();
+    return [...(page || document).querySelectorAll('ytmusic-player-queue-item')].filter(n => n.data);
+  };
+  const itemInfo = n => {
+    const d = n.data || {};
+    const thumbs = (d.thumbnail && d.thumbnail.thumbnails) || [];
+    return { title: runText(d.title), sub: runText(d.shortBylineText || d.longBylineText), img: thumbs.length ? thumbs[thumbs.length - 1].url : '' };
+  };
+  const nextSong = () => {
+    const items = queueItems();
+    const i = items.findIndex(n => n.hasAttribute('selected'));
+    if (i < 0) return null;
+    if (rep.classList.contains('am-one')) return Object.assign(itemInfo(items[i]), { head: 'Repeat one' });
+    if (i + 1 < items.length) return Object.assign(itemInfo(items[i + 1]), { head: 'Up next' });
+    if (rep.classList.contains('am-on') && items.length > 1) return Object.assign(itemInfo(items[0]), { head: 'Up next (repeat)' });
+    return null;
+  };
+
+  // the strip in the shape's frame (x out from the bar's outer edge, y along it), at t (0 in, 1 out)
+  const peekStrip = (g, t) => ({ cy: g.pcy, w: g.pOut * springy(t), h: g.h0p + (g.pAlong - g.h0p) * easeOut(clamp01(t * 1.4)),
+    r: FLY_R + 22 * (1 - easeOut(t)), rc: g.R || FLY_RC });
+  // where the strip goes along the edge: level with the next button, clear of the bar's corners
+  const stripAt = (c, along, rb, R) => Math.max(R + FLY_R + along / 2, Math.min(rb - R - FLY_R - along / 2, c));
+
+  // rail: the strip, in the rail's own shape (flyG's frame). Measured when the peek opens
+  let railPeek = null;
+  flowExtra = g => railPeek && peekT > 0 ? [peekStrip(Object.assign({}, railPeek, { R: g.R }), peekT)] : [];
+
+  // other bars: measure the bar and set up the shape's box and map for its side
+  const peekSetup = () => {
+    const side = posNow, br = bar.getBoundingClientRect(), cs = getComputedStyle(bar);
+    const vertical = side === 'left' || side === 'right';
+    const Wr = vertical ? br.width : br.height, rb = vertical ? br.height : br.width;
+    const R = Math.min(parseFloat(cs.borderTopLeftRadius) || 0, Wr / 2);
+    const pAlong = vertical ? PEEK_ALONG_RAIL : PEEK_ALONG, pOut = vertical ? PEEK_OUT_RAIL : PEEK_OUT;
+    const depth = Wr + pOut + 40;                         // 40: room for the overshoot
+    const nb = nextBtn.getBoundingClientRect();
+    const c = vertical ? nb.top + nb.height / 2 - br.top : nb.left + nb.width / 2 - br.left;
+    const pcy = stripAt(c, pAlong, rb, R);
+    let box, map, flip;
+    if (side === 'bottom') { box = { left: br.left, top: br.bottom - depth, width: br.width, height: depth }; map = (x, y) => [y, depth - x]; flip = false; }
+    else if (side === 'top') { box = { left: br.left, top: br.top, width: br.width, height: depth }; map = (x, y) => [y, x]; flip = true; }
+    else if (side === 'left') { box = { left: br.left, top: br.top, width: depth, height: br.height }; map = (x, y) => [x, y]; flip = false; }
+    else { box = { left: br.right - depth, top: br.top, width: depth, height: br.height }; map = (x, y) => [depth - x, y]; flip = true; }
+    // the sides with a border (a docked bar has them on some sides only, see flySetup)
+    const bw = k => parseFloat(cs['border' + k + 'Width']) > 0;
+    const S = { bottom: ['Bottom', 'Top', 'Left', 'Right'], top: ['Top', 'Bottom', 'Left', 'Right'],
+      left: ['Left', 'Right', 'Top', 'Bottom'], right: ['Right', 'Left', 'Top', 'Bottom'] }[side];
+    const sides = { outer: bw(S[0]), inner: bw(S[1]), top: bw(S[2]), bottom: bw(S[3]) };
+    const g = { Wr, rb, R, map, flip, box, pcy, pAlong, pOut, h0p: 18, side,
+      sides: sides.top && sides.bottom && sides.outer && sides.inner ? null : sides, shadow: !!settings.barFloat && !inHeader };
+    for (const n of [pFly, pShade, pEdge]) Object.assign(n.style, { left: box.left + 'px', top: box.top + 'px', width: box.width + 'px', height: box.height + 'px' });
+    peekG = g;
+  };
+  // the content box: the strip's full size, in window pixels
+  const placeContent = (g, ox, oy) => {
+    const a = g.map(g.Wr, g.pcy - g.pAlong / 2), b = g.map(g.Wr + g.pOut, g.pcy + g.pAlong / 2);
+    Object.assign(peekEl.style, { left: (ox + Math.min(a[0], b[0])) + 'px', top: (oy + Math.min(a[1], b[1])) + 'px',
+      width: Math.abs(b[0] - a[0]) + 'px', height: Math.abs(b[1] - a[1]) + 'px' });
+  };
+  const peekDraw = t => {
+    peekEl.style.opacity = String(clamp01((t - .45) / .35));
+    if (formNow === 'rail') { if (flyG) flyDraw(flyT); return; }     // the rail's shape draws the strip (flowExtra)
+    const g = peekG;
+    if (!g) return;
+    const st = peekStrip(g, t);
+    const d = flowPath(g, [st]);
+    pFly.style.clipPath = `path('${d}')`;
+    pEdgeP.setAttribute('d', flowPath(g, [st], .5, g.sides));
+    if (g.shadow) {
+      pShadeS.style.clipPath = `path('${d}')`;
+      pShade.style.clipPath = `path(evenodd, 'M-100 -100 H${(g.box.width + 100).toFixed(0)} V${(g.box.height + 140).toFixed(0)} H-100 Z ${d}')`;
+    }
+  };
+  // the shape on / off (bars other than the rail): shown and shaped in the same frame as the bar's glass goes off
+  const skinOn = on => {
+    for (const n of [pFly, pEdge]) n.classList.toggle('am-fly-on', on);
+    pShade.classList.toggle('am-fly-on', on && !!peekG && peekG.shadow);
+    if (formNow !== 'rail') bar.classList.toggle('am-skinned', on);
+  };
+  const peekRun = (to, dur, done) => {
+    cancelAnimationFrame(peekRaf);
+    const from = peekT, t0 = performance.now();
+    const step = now => {
+      const k = clamp01((now - t0) / Math.max(1, dur));
+      peekT = to > from ? from + (to - from) * k : from * (1 - easeInOut(k));
+      peekDraw(peekT);
+      if (k < 1) peekRaf = requestAnimationFrame(step);
+      else { peekRaf = 0; if (done) done(); }
+    };
+    peekRaf = requestAnimationFrame(step);
+  };
+  const peekReset = () => {
+    cancelAnimationFrame(peekRaf);
+    peekRaf = 0; peekT = 0; peekOn = false; railPeek = null;
+    skinOn(false);
+    peekEl.remove();
+    if (formNow === 'rail' && flyG) flyDraw(flyT);
+  };
+  const showPeek = () => {
+    if (!settings.peek || peekOn || isMobile() || menuEl || bar.classList.contains('am-idle') ||
+        bar.classList.contains('am-hidden') || bar.classList.contains('am-autohid')) return;
+    const s = nextSong();
+    if (!s || !s.title) return;
+    peekHead.textContent = s.head;
+    peekTitle.textContent = s.title;
+    peekSub.textContent = s.sub;
+    if (s.img) { peekArt.src = s.img; peekArt.hidden = false; } else peekArt.hidden = true;
+    const rail = formNow === 'rail';
+    if (rail && (!flyG || flyOn)) return;                // the tape is out: one strip at a time
+    peekEl.classList.toggle('am-peek-side', rail || posNow === 'left' || posNow === 'right');
+    if (!peekEl.isConnected) document.body.append(peekEl);
+    peekEl.style.opacity = '0';
+    if (peekT === 0) {
+      if (rail) {
+        const br = bar.getBoundingClientRect(), nb = nextBtn.getBoundingClientRect();
+        railPeek = { pAlong: PEEK_ALONG_RAIL, pOut: PEEK_OUT_RAIL, h0p: 18,
+          pcy: stripAt(nb.top + nb.height / 2 - br.top, PEEK_ALONG_RAIL, flyG.rb, flyG.R) };
+        Object.assign(railPeek, { cy: railPeek.pcy });
+        const fb = fly.getBoundingClientRect();
+        placeContent(Object.assign({}, railPeek, { Wr: flyG.Wr, map: flyG.map }), fb.left, fb.top);
+      } else {
+        peekSetup();
+        placeContent(peekG, peekG.box.left, peekG.box.top);
+        skinOn(true);
+      }
+    }
+    peekOn = true;
+    peekDraw(peekT);
+    if (reduceMotion.matches) { peekT = 1; peekDraw(1); return; }
+    peekRun(1, PEEK_OPEN_MS * (1 - peekT * .6));
+  };
+  const hidePeek = now => {
+    clearTimeout(peekWait);
+    if (!peekOn && peekT === 0) return;
+    peekOn = false;
+    if (now === true || reduceMotion.matches) { peekReset(); return; }
+    peekRun(0, PEEK_CLOSE_MS * Math.max(.4, peekT), () => { if (!peekOn) peekReset(); });
+  };
+  nextBtn.addEventListener('pointerenter', e => {
+    if (e.pointerType === 'touch') return;
+    clearTimeout(peekWait);
+    peekWait = setTimeout(showPeek, PEEK_DELAY_MS);
+  });
+  nextBtn.addEventListener('pointerleave', () => hidePeek());
+  // a click skips the song: the strip goes in, and comes back with the new next song if the pointer stays
+  nextBtn.addEventListener('click', () => {
+    hidePeek(true);
+    peekWait = setTimeout(() => { if (nextBtn.matches(':hover')) showPeek(); }, 900);
+  });
+  // the bar moved, changed form or hid: the strip goes at once (it is measured for where the bar was)
+  let peekKey = '';
+  const syncPeek = () => {
+    const r = bar.getBoundingClientRect();
+    const key = [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height), posNow, formNow,
+      bar.classList.contains('am-hidden'), bar.classList.contains('am-autohid')].join();
+    if (key !== peekKey) { peekKey = key; if (peekOn || peekT > 0) hidePeek(true); }
+  };
+
+  const peekStyle = el('style', null, document.head);
+  peekStyle.textContent = `
+    .am-pfly { z-index: 99998; }
+    .am-peek { position: fixed; z-index: 100000; box-sizing: border-box; display: flex; align-items: center; gap: 10px;
+      padding: 0 16px; color: #fff; pointer-events: none; opacity: 0;
+      font-family: var(--am-font, "Switzer", "SF Pro", system-ui, sans-serif); }
+    .am-peek-art { width: 42px; height: 42px; border-radius: 7px; object-fit: cover; flex-shrink: 0; background: rgb(255 255 255 / .08); }
+    .am-peek-art[hidden] { display: none; }
+    .am-peek-text { min-width: 0; }
+    .am-peek-head { font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: rgb(255 255 255 / .5); }
+    .am-peek-title, .am-peek-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .am-peek-title { font-size: 13px; font-weight: 600; margin-top: 1px; }
+    .am-peek-sub { font-size: 12px; color: rgb(255 255 255 / .6); }
+  `;
+  /* ---------- auto-hide: the bar goes after a few seconds, and comes back when the pointer comes near it ---------- */
+  // "Near": over the bar's place (plus a margin), or at the window's edge on the bar's side. It stays while something of
+  // it is in use (a menu, the settings, a drag on the progress bar, the volume, the tape, the peek, keyboard focus),
+  // shows for a moment when the song changes, and never hides on phones or while nothing plays.
+  // The page keeps the bar's room (nothing jumps when it comes and goes).
+  const AUTOHIDE_NEAR = 48;                   // px around the bar's place that count as near
+  const AUTOHIDE_EDGE = 10;                   // px from the window's edge on the bar's side
+  const AUTOHIDE_SONG_MS = 3000;              // shown this long when a new song starts
+  let ahPointer = null, ahAwakeUntil = 0, ahRect = null, ahTitle = '';
+  addEventListener('pointermove', e => { ahPointer = { x: e.clientX, y: e.clientY }; }, { passive: true, capture: true });
+  document.documentElement.addEventListener('pointerleave', () => { ahPointer = null; });
+  // show the bar now (a shortcut, a song change); it hides again after the delay
+  const revealBar = (ms = AUTOHIDE_SONG_MS) => { ahAwakeUntil = Math.max(ahAwakeUntil, performance.now() + ms); };
+  const ahNear = () => {
+    if (!ahPointer || !ahRect) return false;
+    const { x, y } = ahPointer, r = ahRect;
+    if (x >= r.left - AUTOHIDE_NEAR && x <= r.right + AUTOHIDE_NEAR && y >= r.top - AUTOHIDE_NEAR && y <= r.bottom + AUTOHIDE_NEAR) return true;
+    return posNow === 'bottom' ? y >= innerHeight - AUTOHIDE_EDGE : posNow === 'top' ? y <= AUTOHIDE_EDGE
+      : posNow === 'left' ? x <= AUTOHIDE_EDGE : x >= innerWidth - AUTOHIDE_EDGE;
+  };
+  const ahBusy = () => !!menuEl || !!setEl || seeking !== null || flyOn || peekOn || peekT > 0 ||
+    volWrap.classList.contains('am-vol-on') || bar.contains(document.activeElement) || inHeader;
+  const syncAutoHide = () => {
+    const now = performance.now();
+    const on = !!settings.autoHide && !isMobile() && !bar.classList.contains('am-idle');
+    const m = navigator.mediaSession.metadata, t = (m && m.title) || '';
+    if (t !== ahTitle) { if (ahTitle && settings.autoHideSong) revealBar(); ahTitle = t; }
+    const wasHid = bar.classList.contains('am-autohid');
+    if (!wasHid) { const r = bar.getBoundingClientRect(); if (r.width) ahRect = r; }      // its place while shown
+    if (!on || ahNear() || ahBusy()) { revealBar(settings.autoHideDelay * 1000); }
+    const hide = on && now > ahAwakeUntil;
+    if (hide !== wasHid) {
+      bar.classList.toggle('am-autohid', hide);
+      // a rail's glass, outline and shadow are separate shapes (the tape's, title-links.js): they go with it
+      document.documentElement.classList.toggle('am-ah', hide);
+      if (hide) hidePeek(true);
+    }
+  };
+  const ahStyle = el('style', null, document.head);
+  ahStyle.textContent = `
+    .am-bar.am-autohid { opacity: 0; transform: translateY(24px); pointer-events: none; }
+    html.am-pos-top .am-bar.am-autohid { transform: translateY(-24px); }
+    html.am-pos-left .am-bar.am-autohid { transform: translateX(-24px); }
+    html.am-pos-right .am-bar.am-autohid { transform: translateX(24px); }
+    .am-fly, .am-fly-edge, .am-fly-shade { transition: opacity .25s ease, transform .25s ease; }
+    html.am-ah :is(.am-fly, .am-fly-edge, .am-fly-shade) { opacity: 0; pointer-events: none; transform: translateY(24px); }
+    html.am-ah.am-pos-top :is(.am-fly, .am-fly-edge, .am-fly-shade) { transform: translateY(-24px); }
+    html.am-ah .am-fly-in { pointer-events: none; }                    /* the tape's strip can't be clicked while hidden */
+    html.am-ah.am-pos-left :is(.am-fly, .am-fly-edge, .am-fly-shade) { transform: translateX(-24px); }
+    html.am-ah.am-pos-right :is(.am-fly, .am-fly-edge, .am-fly-shade) { transform: translateX(24px); }
+  `;
+  /* ---------- keyboard shortcuts + command palette (Ctrl+K) ---------- */
+  // A shortcut is stored as "Ctrl+Alt+Shift+Meta+<code>" (KeyboardEvent.code: the key's place, so it works with any
+  // keyboard layout and with Alt / Option, which change e.key). YTM's own shortcuts are single keys (space, letters),
+  // so r1ytm's defaults all use Alt+Shift (and Ctrl+K for the palette). Bindings live in localStorage ("am-keys"):
+  // { actionId: combo or '' (none) }; a missing id uses its default.
+  // Keys are ignored while typing (search, any text field), in zen, and while the settings are open.
+  const volStep = d => {
+    const v = video();
+    if (v && v.muted && d > 0) v.muted = false;
+    const val = Math.max(0, Math.min(100, Math.round(getVolume() / 5) * 5 + d));
+    setVolume(val);
+    volRange.value = String(val);
+    showVolPct();
+    toast('Volume ' + val + '%');
+  };
+  const speedStep = d => {
+    const s = settings.speed;
+    let n = d > 0 ? SPEED_STEPS.find(x => x > s) : [...SPEED_STEPS].reverse().find(x => x < s);
+    if (n === undefined) n = d > 0 ? SPEED_STEPS[SPEED_STEPS.length - 1] : SPEED_STEPS[0];
+    setSpeed(n);
+    toast('Speed ' + fmtSpeed(n / 100));
+  };
+  const POS_NAMES = ['Bottom', 'Top', 'Left', 'Right'];
+  const setBarPos = v => {
+    settings.barPos = v; applySettings(); saveSettings(); placeBar(); hideBase();
+    toast('Bar: ' + POS_NAMES[v]);
+  };
+  // id, label, default key, run. The order is the order on the Shortcuts page
+  const ACTIONS = [
+    { id: 'palette', label: 'Command palette', def: 'Ctrl+KeyK', run: () => openPalette() },
+    { id: 'playPause', label: 'Play / pause', def: '', run: clickYt('PlayPause') },
+    { id: 'next', label: 'Next song', def: '', run: clickYt('Next') },
+    { id: 'previous', label: 'Previous song', def: '', run: clickYt('Previous') },
+    { id: 'like', label: 'Like / remove like', def: 'KeyL', run: () => likeBtn.click() },
+    { id: 'volUp', label: 'Volume up', def: '', run: () => volStep(5) },
+    { id: 'volDown', label: 'Volume down', def: '', run: () => volStep(-5) },
+    { id: 'mute', label: 'Mute / unmute', def: '', run: () => { const v = video(); if (v) { v.muted = !v.muted; toast(v.muted ? 'Muted' : 'Sound on'); } } },
+    { id: 'faster', label: 'Faster', def: 'Alt+Shift+Period', run: () => speedStep(1) },
+    { id: 'slower', label: 'Slower', def: 'Alt+Shift+Comma', run: () => speedStep(-1) },
+    { id: 'normalSpeed', label: 'Normal speed', def: 'Alt+Shift+Digit0', run: () => { setSpeed(100); toast('Speed 1×'); } },
+    { id: 'player', label: 'Open / close the player page', def: 'Alt+Shift+KeyP', run: () => togglePage() },
+    { id: 'lyrics', label: 'Lyrics', def: '', run: () => showTab(...LYRICS) },
+    { id: 'queue', label: 'Up next (queue)', def: '', run: () => showTab(...UPNEXT) },
+    { id: 'zen', label: 'Zen mode', def: 'Alt+Shift+KeyZ', run: () => openZen() },
+    { id: 'barPos', label: 'Next bar position', def: 'Alt+Shift+KeyB', run: () => setBarPos((settings.barPos + 1) % 4) },
+    { id: 'showBar', label: 'Show the bar (auto-hide)', def: 'Alt+Shift+KeyH', run: () => revealBar(3000) },
+    { id: 'copyLink', label: 'Copy link to this song', def: 'Alt+Shift+KeyC', run: () => copyNowLink() },
+    { id: 'settings', label: 'Open the settings', def: 'Alt+Shift+KeyS', run: () => openSettings() },
+  ];
+  const keys = (() => { try { return JSON.parse(store.get('am-keys', '{}')) || {}; } catch { return {}; } })();
+  const keyOf = a => typeof keys[a.id] === 'string' ? keys[a.id] : a.def;
+  const saveKeys = () => store.set('am-keys', JSON.stringify(keys));
+  const resetKeys = () => { for (const k of Object.keys(keys)) delete keys[k]; saveKeys(); };
+  const MODS = ['Control', 'Alt', 'Shift', 'Meta', 'AltGraph', 'OS'];
+  const comboOf = e => {
+    if (!e.code || MODS.some(m => e.key === m || e.code.startsWith(m))) return '';
+    return (e.ctrlKey ? 'Ctrl+' : '') + (e.altKey ? 'Alt+' : '') + (e.shiftKey ? 'Shift+' : '') + (e.metaKey ? 'Meta+' : '') + e.code;
+  };
+  const KEY_NAMES = { Period: '.', Comma: ',', Slash: '/', Backslash: '\\', Semicolon: ';', Quote: "'", BracketLeft: '[', BracketRight: ']',
+    Minus: '-', Equal: '=', Backquote: '`', Space: 'Space', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc' };
+  const isMac = /Mac/.test(navigator.platform || '');
+  const showCombo = c => !c ? 'None' : c.split('+').map(p =>
+    p === 'Meta' ? (isMac ? '⌘' : 'Win') : p === 'Alt' && isMac ? '⌥' : p === 'Ctrl' && isMac ? '⌃' : p === 'Shift' && isMac ? '⇧' :
+    /^Key[A-Z]$/.test(p) ? p.slice(3) : /^Digit\d$/.test(p) ? p.slice(5) : /^Numpad/.test(p) ? 'Num ' + p.slice(6) : KEY_NAMES[p] || p
+  ).join(isMac ? '' : '+');
+  const typing = e => {
+    const t = e.composedPath ? e.composedPath()[0] : e.target;
+    return !!t && t.nodeType === 1 && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || !!(t.closest && t.closest('ytmusic-search-box, [contenteditable="true"]')));
+  };
+  let recording = null;                       // the Shortcuts row waiting for a key: { action, done(combo) }
+  addEventListener('keydown', e => {
+    if (recording) {                           // the Shortcuts page is listening for a new key
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { recording.done(null); return; }
+      if (e.key === 'Backspace' || e.key === 'Delete') { recording.done(''); return; }
+      const c = comboOf(e);
+      if (c) recording.done(c);
+      return;
+    }
+    if (zenEl || setEl || palEl || typing(e)) return;
+    const c = comboOf(e);
+    if (!c) return;
+    const a = ACTIONS.find(x => keyOf(x) === c);
+    if (!a) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.repeat && !/^vol|faster|slower/.test(a.id)) return;
+    a.run();
+  }, true);
+
+  /* the Shortcuts page of the settings (built by openSettings, after Font / Background); returns a redraw function */
+  const buildKeySettings = p => {
+    el('div', 'am-set-group', p).textContent = 'Shortcuts';
+    el('div', 'am-set-subhead', p).textContent = 'Click a key, then press the new keys. Backspace: none. Esc: cancel';
+    const card = el('div', 'am-set-card', p);
+    const rows = ACTIONS.map(a => {
+      const row = el('div', 'am-set-row am-set-inline', card);
+      const lt = el('div', 'am-set-ltext', row);
+      el('div', 'am-set-label', lt).textContent = a.label;
+      const note = el('div', 'am-set-note', lt);
+      const chip = el('button', 'am-set-btn am-set-soft am-key-chip', row);
+      const show = () => { chip.textContent = showCombo(keyOf(a)); chip.classList.toggle('am-key-none', !keyOf(a)); };
+      chip.addEventListener('click', () => {
+        if (recording) recording.done(null);
+        chip.textContent = 'Press keys…';
+        chip.classList.add('am-key-rec');
+        note.textContent = '';
+        recording = {
+          done: c => {
+            recording = null;
+            chip.classList.remove('am-key-rec');
+            if (c !== null) {
+              const other = c && ACTIONS.find(x => x !== a && keyOf(x) === c);
+              if (other) { keys[other.id] = ''; note.textContent = 'Taken from “' + other.label + '”'; }
+              keys[a.id] = c;
+              saveKeys();
+            }
+            rows.forEach(f => f());
+          },
+        };
+      });
+      show();
+      return show;
+    });
+    return () => rows.forEach(f => f());
+  };
+
+  /* the command palette: every action above, every setting choice / switch, and the bar layouts. Type to filter;
+     arrows + Enter, or a click; Esc closes */
+  let palEl = null;
+  const applySetting = (s, v) => {
+    const was = settings[s.key];
+    settings[s.key] = v; applySettings(); saveSettings();
+    if (s.change && was !== v) s.change();
+  };
+  const paletteCommands = () => {
+    const out = ACTIONS.filter(a => a.id !== 'palette').map(a => ({ label: a.label, hint: showCombo(keyOf(a)) === 'None' ? '' : showCombo(keyOf(a)), run: a.run }));
+    for (const s of SETTINGS) {
+      if (!s.group || (s.disabled && s.disabled())) continue;
+      const where = s.group + (s.sub ? ' › ' + s.sub : '');
+      if (s.type === 'choice') for (const [t, v] of s.options) {
+        out.push({ label: s.label + ': ' + t, hint: where, on: settings[s.key] === v, run: () => { applySetting(s, v); toast(s.label + ': ' + t); } });
+      } else if (s.type === 'toggle') {
+        const on = !!settings[s.key];
+        out.push({ label: s.label + ': turn ' + (on ? 'off' : 'on'), hint: where, run: () => { applySetting(s, on ? 0 : 1); toast(s.label + ': ' + (on ? 'off' : 'on')); } });
+      } else if (s.type === 'action') out.push({ label: s.label, hint: where, run: () => s.run(null, null) });
+    }
+    for (const [t, m] of [['Full', 'full'], ['Compact', 'compact'], ['Classic', 'classic']]) {
+      out.push({ label: 'Bar layout: ' + t, hint: 'Bar & menus', on: layoutNow === m, run: () => { applyMode(m); placeBar(); hideBase(); toast('Bar layout: ' + t); } });
+    }
+    for (const f of COPY_FORMATS) out.push({ label: 'Copy link as ' + f.label, hint: f.note, run: () => copyLink(nowTarget(), f.key) });
+    return out;
+  };
+  // every word must be in the label or the hint; earlier and whole-word matches first
+  const palFilter = (cmds, q) => {
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return cmds;
+    return cmds.map(c => {
+      const l = c.label.toLowerCase(), h = (c.hint || '').toLowerCase();
+      let score = 0;
+      for (const w of words) {
+        const i = l.indexOf(w);
+        if (i >= 0) score += (i === 0 ? 0 : /\W/.test(l[i - 1]) ? 2 : 5) + i / 100;
+        else if (h.includes(w)) score += 20;
+        else return null;
+      }
+      return { c, score };
+    }).filter(Boolean).sort((a, b) => a.score - b.score).map(x => x.c);
+  };
+  const closePalette = () => {
+    if (!palEl) return;
+    const p = palEl;
+    palEl = null;
+    // while it fades out it must not keep the keyboard: a key pressed then (Ctrl+K again, a shortcut) would go to
+    // its text box, be taken as typing, and the next keys would reach YouTube Music
+    if (p.contains(document.activeElement)) document.activeElement.blur();
+    p.inert = true;
+    p.classList.add('am-pal-out');
+    setTimeout(() => p.remove(), 140);
+  };
+  const openPalette = () => {
+    if (palEl) { closePalette(); return; }
+    if (zenEl) return;
+    closeMenu();
+    closeSettings();
+    const back = el('div', 'am-pal-back', document.body);
+    const box = el('div', 'am-pal', back);
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'r1ytm commands');
+    const input = el('input', 'am-pal-input', box);
+    input.placeholder = 'Type a command or a setting…';
+    input.setAttribute('aria-label', 'Command');
+    const list = el('div', 'am-pal-list', box);
+    list.setAttribute('role', 'listbox');
+    const all = paletteCommands();
+    let shown = [], sel = 0;
+    const render = () => {
+      shown = palFilter(all, input.value).slice(0, 60);
+      sel = Math.min(sel, Math.max(0, shown.length - 1));
+      list.replaceChildren();
+      if (!shown.length) { el('div', 'am-pal-empty', list).textContent = 'Nothing found'; return; }
+      shown.forEach((c, i) => {
+        const r = el('div', 'am-pal-item' + (i === sel ? ' am-kb' : '') + (c.on ? ' am-pal-on' : ''), list);
+        r.setAttribute('role', 'option');
+        el('span', 'am-pal-label', r).textContent = c.label;
+        if (c.hint) el('span', 'am-pal-hint', r).textContent = c.hint;
+        r.addEventListener('mousemove', () => { if (sel !== i) { sel = i; mark(); } });
+        r.addEventListener('click', () => run(c));
+      });
+    };
+    const mark = () => [...list.children].forEach((r, i) => r.classList.toggle('am-kb', i === sel));
+    const run = c => { closePalette(); c.run(); };
+    input.addEventListener('input', () => { sel = 0; render(); });
+    back.addEventListener('keydown', e => {
+      e.stopPropagation();                             // no YTM hotkeys while typing here
+      if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+      else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!shown.length) return;
+        sel = (sel + (e.key === 'ArrowDown' ? 1 : -1) + shown.length) % shown.length;
+        mark();
+        const r = list.children[sel];
+        if (r) r.scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'Enter') { e.preventDefault(); if (shown[sel]) run(shown[sel]); }
+      else if (comboOf(e) === keyOf(ACTIONS[0])) { e.preventDefault(); closePalette(); }   // the palette key again
+    });
+    back.addEventListener('mousedown', e => { if (e.target === back) { e.preventDefault(); closePalette(); } });
+    render();
+    palEl = back;
+    input.focus({ preventScroll: true });
+  };
+  window.amPalette = openPalette;
+
+  const keyStyle = el('style', null, document.head);
+  keyStyle.textContent = `
+    .am-key-chip { min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; background: rgb(255 255 255 / .08); }
+    .am-key-chip.am-key-none { color: rgb(255 255 255 / .4); }
+    .am-key-chip.am-key-rec { background: #fa586a; color: #fff; }
+    .am-pal-back { position: fixed; inset: 0; z-index: 100003; display: flex; justify-content: center; align-items: flex-start;
+      padding: 14vh 16px 16px; background: rgb(0 0 0 / .3); animation: am-set-fade .14s ease; }
+    .am-pal-back.am-pal-out { opacity: 0; transition: opacity .12s ease; pointer-events: none; }
+    .am-pal { width: min(560px, 100%); max-height: 60vh; display: flex; flex-direction: column; overflow: hidden; border-radius: 16px;
+      color: #fff; font-family: var(--am-font, "Switzer", "SF Pro", system-ui, sans-serif);
+      background: rgb(34 34 36 / .82); backdrop-filter: blur(40px) saturate(190%); -webkit-backdrop-filter: blur(40px) saturate(190%);
+      border: 1px solid rgb(255 255 255 / .12); box-shadow: 0 24px 70px rgb(0 0 0 / .5); animation: am-set-in .16s cubic-bezier(.2, .8, .2, 1); }
+    .am-pal-input { all: unset; box-sizing: border-box; width: 100%; padding: 15px 18px; font-size: 15px;
+      border-bottom: 1px solid rgb(255 255 255 / .1); }
+    .am-pal-input::placeholder { color: rgb(255 255 255 / .4); }
+    .am-pal-list { overflow-y: auto; padding: 6px; scrollbar-width: thin; }
+    .am-pal-item { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; cursor: pointer; font-size: 13.5px; }
+    .am-pal-item.am-kb { background: rgb(255 255 255 / .12); }
+    .am-pal-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .am-pal-on .am-pal-label::after { content: " ✓"; color: #fa586a; }
+    .am-pal-hint { margin-left: auto; flex-shrink: 0; font-size: 11.5px; color: rgb(255 255 255 / .45); white-space: nowrap; }
+    .am-pal-empty { padding: 14px; font-size: 13px; color: rgb(255 255 255 / .5); }
+    @media (prefers-reduced-motion: reduce) { .am-pal-back, .am-pal { animation: none; } }
+  `;
   /* ---------- sync loop ---------- */
   let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
   const timer = setInterval(() => {
     syncSpeed();                                          // also in zen: the speed stays what it is set to
+    checkPrompts();                                       // also in zen ("Listen on this device?")
     if (zenEl) return;                                    // zen covers everything: nothing here is visible, save the work
     // the settings panel covers the page: the page checks below (they measure the page, which is slow) wait, so the
     // panel stays smooth. The bar keeps updating, it is the live preview for the bar settings.
@@ -5323,6 +6350,9 @@
     watchPage();
     onPageState();
     bar.classList.toggle('am-hidden', isFullscreen());
+    syncAutoHide();
+    syncPeek();
+    syncYtToast();
 
     const m = navigator.mediaSession.metadata;
     const idle = !m || !m.title;
@@ -5375,12 +6405,14 @@
         volBtn.replaceChildren(svg(muted ? P.mute : P.vol));
       }
     }
-    if (document.activeElement !== volRange) volRange.value = String(getVolume());
+    if (document.activeElement !== volRange && volTarget === null) volRange.value = String(getVolume());   // not mid-glide
     showVolPct();
 
     const lk = ytLike();
     const liked = isLiked(lk);
     if (liked !== wasLiked) {
+      // a small bounce is the feedback (YTM's own toast is hidden); not on the first look or a new song
+      if (wasLiked !== null && performance.now() - lastLikeAt < 4000) bounceHeart();
       wasLiked = liked;
       likeBtn.replaceChildren(svg(liked ? P.heartFill : P.heart));
       likeBtn.classList.toggle('am-on', liked);
@@ -5404,6 +6436,10 @@
     clearInterval(timer);
     closeMenu();
     closeSettings();
+    closePalette();
+    promptObs.disconnect();
+    peekReset();
+    for (const n of [toastEl, peekEl, pFly, pEdge, pShade, shareStyle, peekStyle, ahStyle, keyStyle]) n.remove();
     bar.remove();
     for (const list of guideEntries.values()) list.forEach(e => e.g.remove());
     for (const n of [...roomed.keys()]) unroom(n);
@@ -5423,7 +6459,7 @@
     rope.remove();
     document.documentElement.classList.remove('am-pos-' + posNow, 'am-in-header', 'am-top-float', 'am-search-open', 'am-dock',
       'am-side', 'am-side-in', 'am-side-float', 'am-side-full', 'am-brand-on');
-    document.documentElement.classList.remove('am-refract', 'am-easy-track');
+    document.documentElement.classList.remove('am-refract', 'am-easy-track', 'am-show-volpct', 'am-ah');
     refractDefs.remove();
     document.documentElement.classList.remove('am-player-open', 'am-animating', 'am-fs', 'am-mini-hidden');
     document.querySelectorAll(`${MINI}, ytmusic-player-bar, #player-bar-background`).forEach(n => {

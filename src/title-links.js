@@ -71,7 +71,7 @@
   // the volume in %, shown with the slider (between the slider and the button)
   const volPct = el('span', 'am-vol-pct', volWrap);
   const showVolPct = () => {
-    const v = video(), t = v && v.muted ? 'Muted' : getVolume() + '%';
+    const v = video(), t = v && v.muted ? 'Muted' : volNow() + '%';
     if (volPct.textContent !== t) volPct.textContent = t;
   };
   const volBtn = btn(volWrap, 'vol', () => {
@@ -79,26 +79,47 @@
     if (v) v.muted = !v.muted;
     showVolPct();
   });
-  /* scroll on the volume button or slider: 5% a step. A trackpad sends many small deltas, so they add up until they
-     make a whole step. The slider stays open for a moment after the last step, and the page doesn't scroll. */
-  let volAcc = 0, volShowT = 0;
+  /* scroll on the volume button or slider: smooth, not in steps. Each wheel / trackpad movement moves a target in
+     proportion to how far it scrolled (a big jump from one event is capped); the volume glides to the target, a bit
+     each frame (it eases in, like a fader). During the glide the video's own volume is set directly (in fractions of
+     a percent, so it doesn't step); YouTube Music's slider gets the final value once the glide settles, so its state
+     (kept for the next song) stays right. The slider stays open for a moment after, and the page doesn't scroll. */
+  const VOL_PER_PX = .08;                    // % of volume per pixel scrolled (a mouse wheel notch is ~100px: 8%)
+  const VOL_MAX_EVENT = 160;                 // px: one event can't move it more than this (some mice send 240+)
+  const VOL_GLIDE_MS = 90;                   // the time constant of the glide (about 3x this to settle)
+  let volShowT = 0, volTarget = null, volCur = null, volRaf = 0, volLastT = 0;
+  const volNow = () => volCur !== null ? Math.round(volCur) : getVolume();     // the % shown (mid-glide too)
+  const volGlide = now => {
+    const dt = Math.min(64, now - volLastT);
+    volLastT = now;
+    volCur += (volTarget - volCur) * (1 - Math.exp(-dt / VOL_GLIDE_MS));
+    const v = video();
+    if (Math.abs(volTarget - volCur) < .05) {
+      volCur = null;
+      volRaf = 0;
+      setVolume(Math.round(volTarget));                  // settled: YTM's own slider and state
+      volRange.value = String(Math.round(volTarget));
+      volTarget = null;
+      showVolPct();
+      return;
+    }
+    if (v) v.volume = Math.max(0, Math.min(1, volCur / 100));
+    volRange.value = String(volCur);
+    showVolPct();
+    volRaf = requestAnimationFrame(volGlide);
+  };
   volWrap.addEventListener('wheel', e => {
     e.preventDefault();
     e.stopPropagation();
-    const d = (e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY) || -e.deltaX;
-    if (Math.sign(d) !== Math.sign(volAcc)) volAcc = 0;
-    volAcc += d;
-    const steps = Math.trunc(volAcc / 50);
-    if (steps) {
-      volAcc -= steps * 50;                                // keep the rest for the next step
-      const v = video();
-      if (v && v.muted && steps < 0) v.muted = false;     // scrolling up while muted: unmute first
-      const now = Math.round(getVolume() / 5) * 5;
-      const val = Math.max(0, Math.min(100, now - steps * 5));
-      setVolume(val);
-      volRange.value = String(val);
-    }
-    showVolPct();
+    let d = (e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY) || -e.deltaX;
+    d = Math.max(-VOL_MAX_EVENT, Math.min(VOL_MAX_EVENT, d));
+    // scrolling down turns it up (Bar & menus > Volume > Invert scroll: down turns it down)
+    const change = (settings.volInvert ? -d : d) * VOL_PER_PX;
+    const v = video();
+    if (volTarget === null) volTarget = volCur = getVolume();
+    if (v && v.muted && change > 0) v.muted = false;     // turning it up while muted: unmute first
+    volTarget = Math.max(0, Math.min(100, volTarget + change));
+    if (!volRaf) { volLastT = performance.now(); volRaf = requestAnimationFrame(volGlide); }
     volWrap.classList.add('am-vol-on');
     clearTimeout(volShowT);
     volShowT = setTimeout(() => volWrap.classList.remove('am-vol-on'), 1200);
@@ -242,29 +263,43 @@
   // the rail's own CSS border is. (An SVG clip to keep a wider line inside did not work on YouTube Music's page.)
   // sides (the outline only): a docked rail has its border on some sides only, and square corners. Then the outline
   // is open: only those sides, plus the strip.
-  const shapePath = (g, w, h, r, rc, e = 0, sides = null) => {
+  // The path is drawn in the shape's own frame: x = out from the bar's outer edge (0 .. Wr is the bar, past Wr the
+  // strips), y = along the edge (0 .. rb). g.map turns a point into the box's pixels (left rail: as is; right rail:
+  // mirrored; peek.js maps it onto a bottom / top bar too), g.flip says whether that map mirrors (arcs turn the
+  // other way). Strips: { cy, w, h, r, rc }, any number, each one bulging out of the inner edge at cy. A strip too
+  // close to the one before it (their joins would cross) is left out. flowExtra (peek.js): more strips for the rail.
+  let flowExtra = null;
+  const flowPath = (g, strips, e = 0, sides = null) => {
     const { Wr, rb, R } = g, rt = 0;
-    const py0 = g.cy - h / 2, py1 = g.cy + h / 2;
-    r = Math.max(0, Math.min(r, w / 2, py0 - rt - R, rb - R - py1));     // the joins stay clear of the rail's corners
-    rc = Math.max(0, Math.min(rc, w - r, h / 2));
-    const X = x => (g.right ? g.boxW - x : x).toFixed(2), Y = y => y.toFixed(2);
-    const A = (rad, sweep, x, y) => { rad = Math.max(0, rad).toFixed(2); return `A${rad} ${rad} 0 0 ${g.right ? 1 - sweep : sweep} ${X(x)} ${Y(y)}`; };
-    const rail = `M${X(e)} ${Y(rt + R)} ${A(R - e, 1, R, rt + e)} L${X(Wr - R)} ${Y(rt + e)} ${A(R - e, 1, Wr - e, rt + R)} `;
-    const end = `L${X(Wr - e)} ${Y(rb - R)} ${A(R - e, 1, Wr - R, rb - e)} L${X(R)} ${Y(rb - e)} ${A(R - e, 1, e, rb - R)} Z`;
-    const strip = w < 2 * e + 1 ? '' :                     // no strip yet: the rail alone
-      `L${X(Wr - e)} ${Y(py0 - r)} ${A(r + e, 0, Wr + r, py0 + e)} L${X(Wr + w - rc)} ${Y(py0 + e)} ${A(rc - e, 1, Wr + w - e, py0 + rc)} ` +
-      `L${X(Wr + w - e)} ${Y(py1 - rc)} ${A(rc - e, 1, Wr + w - rc, py1 - e)} L${X(Wr + r)} ${Y(py1 - e)} ${A(r + e, 0, Wr - e, py1 + r)} `;
+    const P = (x, y) => { const [a, b] = g.map(x, y); return a.toFixed(2) + ' ' + b.toFixed(2); };
+    const A = (rad, sweep, x, y) => { rad = Math.max(0, rad).toFixed(2); return `A${rad} ${rad} 0 0 ${g.flip ? 1 - sweep : sweep} ${P(x, y)}`; };
+    let strip = '', prev = -Infinity;                     // the low end of the strip before (with its join)
+    for (const st of strips.filter(Boolean).sort((a, b) => a.cy - b.cy)) {
+      const w = st.w, h = st.h, py0 = st.cy - h / 2, py1 = st.cy + h / 2;
+      if (w < 2 * e + 1) continue;                         // no strip yet
+      let r = Math.max(0, Math.min(st.r, w / 2, py0 - rt - R, rb - R - py1));     // the joins stay clear of the rail's corners
+      if (py0 - r < prev) continue;                        // would run into the strip before it
+      const rc = Math.max(0, Math.min(st.rc, w - r, h / 2));
+      strip += `L${P(Wr - e, py0 - r)} ${A(r + e, 0, Wr + r, py0 + e)} L${P(Wr + w - rc, py0 + e)} ${A(rc - e, 1, Wr + w - e, py0 + rc)} ` +
+        `L${P(Wr + w - e, py1 - rc)} ${A(rc - e, 1, Wr + w - rc, py1 - e)} L${P(Wr + r, py1 - e)} ${A(r + e, 0, Wr - e, py1 + r)} `;
+      prev = py1 + r;
+    }
+    const rail = `M${P(e, rt + R)} ${A(R - e, 1, R, rt + e)} L${P(Wr - R, rt + e)} ${A(R - e, 1, Wr - e, rt + R)} `;
+    const end = `L${P(Wr - e, rb - R)} ${A(R - e, 1, Wr - R, rb - e)} L${P(R, rb - e)} ${A(R - e, 1, e, rb - R)} Z`;
     if (!sides) return rail + strip + end;
     // open outline: each side a 1px line; where two meet, the corner pixel belongs to one of them only
     const { top, bottom, outer, inner } = sides;
     let d = '';
-    if (top) d += `M${X(outer ? 1 : 0)} ${Y(e)} L${X(Wr - (inner ? 1 : 0))} ${Y(e)} `;
-    if (bottom) d += `M${X(outer ? 1 : 0)} ${Y(rb - e)} L${X(Wr - (inner ? 1 : 0))} ${Y(rb - e)} `;
-    if (outer) d += `M${X(e)} ${Y(0)} L${X(e)} ${Y(rb)} `;
-    if (inner) d += `M${X(Wr - e)} ${Y(top ? 1 : 0)} ${strip}L${X(Wr - e)} ${Y(rb - (bottom ? 1 : 0))}`;
+    if (top) d += `M${P(outer ? 1 : 0, e)} L${P(Wr - (inner ? 1 : 0), e)} `;
+    if (bottom) d += `M${P(outer ? 1 : 0, rb - e)} L${P(Wr - (inner ? 1 : 0), rb - e)} `;
+    if (outer) d += `M${P(e, 0)} L${P(e, rb)} `;
+    if (inner) d += `M${P(Wr - e, top ? 1 : 0)} ${strip}L${P(Wr - e, rb - (bottom ? 1 : 0))}`;
     else if (strip) d += strip.replace(/^L/, 'M');
     return d;
   };
+  // the rail + the tape's strip (and peek.js's strip, if any)
+  const shapePath = (g, w, h, r, rc, e = 0, sides = null) =>
+    flowPath(g, [{ cy: g.cy, w, h, r, rc }].concat(flowExtra ? flowExtra(g) : []), e, sides);
   /* the rope. The outline is a rope wound around a rounded square (box: x, y, size s, corner r) that doesn't turn,
      like a pulley that is fixed. Its free end leaves the square's low edge at D, going toward the page; pulling it
      drags the rest of the rope around the square and off at D, so the wound part gets shorter from its far end.
@@ -353,7 +388,8 @@
     // the sides with a border (all of them unless docked)
     const bw = k => parseFloat(cs['border' + k + 'Width']) > 0;
     const sides = { top: bw('Top'), bottom: bw('Bottom'), outer: bw(right ? 'Right' : 'Left'), inner: bw(right ? 'Left' : 'Right') };
-    const g = { right, Wr, R, boxW, rb: br.height, W: FLY_W, H, h0: 18, cy,
+    const g = { right, Wr, R, boxW, rb: br.height, W: FLY_W, H, h0: 18, cy, flip: right,
+      map: right ? (x, y) => [boxW - x, y] : (x, y) => [x, y],
       sides: sides.top && sides.bottom && sides.outer && sides.inner ? null : sides,
       shadow: !!settings.barFloat };                          // a docked rail has no shadow
     const box = { left: (right ? br.right - boxW : br.left) + 'px', top: br.top + 'px', width: boxW + 'px', height: br.height + 'px' };
