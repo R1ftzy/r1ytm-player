@@ -137,6 +137,27 @@
     ctx.restore();
   };
 
+  /* the finished background: the paint layer rendered at the screen's real pixel size (at most 2560 px on the long
+     side), saved as one WebP picture with its strokes (so the maker can edit it again) and set as the background.
+     Used by the maker's Apply and by the Look presets (themes.js), which paint their strokes from a few numbers. */
+  const saveGradientBg = async (layer, g) => {
+    const dpr = devicePixelRatio || 1;
+    const k = Math.min(1, 2560 / (Math.max(innerWidth, innerHeight) * dpr));
+    const F = document.createElement('canvas');
+    F.width = Math.round(innerWidth * dpr * k);
+    F.height = Math.round(innerHeight * dpr * k);
+    gmRender(F.getContext('2d'), F.width, F.height, layer, g);
+    const toBlob = (c, type, qual) => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('toBlob')), type, qual));
+    const img = await toBlob(F, 'image/webp', 0.9);
+    F.width = F.height = 0;
+    await idb.set('bg-gradient', img);
+    await idb.set('grad-paint', await toBlob(layer, 'image/png'));
+    look.grad = Object.assign({}, g);
+    look.bg = 'gradient';
+    saveLook();
+    await applyBg();
+  };
+
   let gmEl = null;
   const openGradientMaker = async onDone => {
     if (gmEl) return;
@@ -323,22 +344,7 @@
       apply.disabled = true;
       apply.textContent = 'Saving…';
       try {
-        // final picture at the screen's real pixel size (at most 2560 px on the long side)
-        const dpr = devicePixelRatio || 1;
-        const k = Math.min(1, 2560 / (Math.max(innerWidth, innerHeight) * dpr));
-        const F = document.createElement('canvas');
-        F.width = Math.round(innerWidth * dpr * k);
-        F.height = Math.round(innerHeight * dpr * k);
-        gmRender(F.getContext('2d'), F.width, F.height, layer, g);
-        const toBlob = (c, type, qual) => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('toBlob')), type, qual));
-        const img = await toBlob(F, 'image/webp', 0.9);
-        F.width = F.height = 0;
-        await idb.set('bg-gradient', img);
-        await idb.set('grad-paint', await toBlob(layer, 'image/png'));
-        look.grad = Object.assign({}, g);
-        look.bg = 'gradient';
-        saveLook();
-        await applyBg();
+        await saveGradientBg(layer, g);
         close();
         if (onDone) onDone();
       } catch (e) {

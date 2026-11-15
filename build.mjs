@@ -36,6 +36,7 @@ const SECTIONS = [
   'bar-position',    // bar at the bottom or the top (in YTM's header / under it)
   'zen',             // zen mode: locked, title-card listening screen
   'vinyl',           // player page art as a spinning record
+  'hqart',           // high-quality art (off by default)
   'changelog',       // "What's new" popup after an update
   'backup',          // export / import every setting as one file
   'share',           // copy links (Discord embeds) + the toast note at the bar
@@ -43,6 +44,7 @@ const SECTIONS = [
   'peek',            // up-next peek on the next button
   'autohide',        // auto-hide bar
   'keys',            // keyboard shortcuts + command palette (Ctrl+K)
+  'themes',          // theme presets (settings page "Look")
   'sync-loop',       // the interval that keeps everything in sync + teardown
 ];
 

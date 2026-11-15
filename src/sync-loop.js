@@ -20,6 +20,7 @@
     }
     if (tick % 4 === 1 && !busy && curPage === 'artist') syncArtist();
     if (tick % 4 === 3 && !busy) roomForPlaying();        // room for the playing row's overlay
+    if (tick % 4 === 1 && !busy) syncHqArt();             // high-quality art (off by default)
     placeBar();                                           // bottom / top, in or under the header
     syncSearch();
     updateRefractMap();                                   // no-op unless refraction is on and the bar changed size
@@ -115,7 +116,7 @@
     closePalette();
     promptObs.disconnect();
     peekReset();
-    for (const n of [toastEl, peekEl, pFly, pEdge, pShade, shareStyle, peekStyle, ahStyle, keyStyle]) n.remove();
+    for (const n of [toastEl, peekEl, pFly, pEdge, pShade, shareStyle, peekStyle, ahStyle, keyStyle, themeStyle]) n.remove();
     bar.remove();
     for (const list of guideEntries.values()) list.forEach(e => e.g.remove());
     for (const n of [...roomed.keys()]) unroom(n);

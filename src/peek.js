@@ -28,9 +28,12 @@
 
   let peekT = 0, peekOn = false, peekRaf = 0, peekWait = 0, peekG = null;
 
+  // the queue in play order, one row per entry: rows inside something hidden (the other version of a song / video
+  // pair, which YTM keeps next to it) and rows not drawn are left out
   const queueItems = () => {
     const page = playerPage();
-    return [...(page || document).querySelectorAll('ytmusic-player-queue-item')].filter(n => n.data);
+    return [...(page || document).querySelectorAll('ytmusic-player-queue-item')]
+      .filter(n => n.data && !n.closest('[hidden]') && getComputedStyle(n).display !== 'none');
   };
   const itemInfo = n => {
     const d = n.data || {};
@@ -39,7 +42,12 @@
   };
   const nextSong = () => {
     const items = queueItems();
-    const i = items.findIndex(n => n.hasAttribute('selected'));
+    // the row playing now: the one with the speaker icon (play state playing / paused); else the video playing now;
+    // YTM's "selected" mark last (it can stay on another row, e.g. the one the queue was started from)
+    const vid = curVideoId();
+    let i = items.findIndex(n => /^(playing|paused|loading)$/.test(n.getAttribute('play-button-state') || ''));
+    if (i < 0 && vid) i = items.findIndex(n => n.data.videoId === vid);
+    if (i < 0) i = items.findIndex(n => n.hasAttribute('selected'));
     if (i < 0) return null;
     if (rep.classList.contains('am-one')) return Object.assign(itemInfo(items[i]), { head: 'Repeat one' });
     if (i + 1 < items.length) return Object.assign(itemInfo(items[i + 1]), { head: 'Up next' });

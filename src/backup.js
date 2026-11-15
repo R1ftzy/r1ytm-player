@@ -34,7 +34,9 @@
   const exportSettings = async note => {
     try {
       const files = {};
-      for (const k of BACKUP_FILES) {
+      // the look's files, and the files kept with your own presets (themes.js)
+      const presetKeys = userPresets.flatMap(pr => (pr.files || []).map(k => presetFileKey(pr.id, k)));
+      for (const k of BACKUP_FILES.concat(presetKeys)) {
         let v = null;
         try { v = await idb.get(k); } catch {}
         const p = v ? await packFile(v) : null;
@@ -47,6 +49,7 @@
         look: JSON.parse(JSON.stringify(look)),
         zenMinutes: zenMins(),
         keys: Object.assign({}, keys),
+        presets: JSON.parse(JSON.stringify(userPresets)),
         files,
       };
       const name = 'r1ytm-settings-' + new Date().toISOString().slice(0, 10) + '.json';
@@ -103,13 +106,29 @@
         if (typeof v === 'string' && /^((Ctrl|Alt|Shift|Meta)\+)*[A-Za-z0-9]*$/.test(v)) ks[a.id] = v;
       }
     }
+    // your own presets: id, name, and the glass / look values (checked when one is applied, like any setting)
+    const presets = [];
+    if (Array.isArray(d.presets)) {
+      for (const pr of d.presets) {
+        if (!pr || typeof pr !== 'object' || typeof pr.id !== 'string' || !/^[\w-]{1,24}$/.test(pr.id) || typeof pr.name !== 'string') continue;
+        const set = {}, lk = {};
+        if (pr.set && typeof pr.set === 'object') for (const k of PRESET_SET) if (Number.isFinite(Number(pr.set[k]))) set[k] = Number(pr.set[k]);
+        if (pr.look && typeof pr.look === 'object') for (const k of PRESET_LOOK) if (k in pr.look) {
+          const v = pr.look[k], def = LOOK_DEF[k];
+          if (def === null ? v === null || typeof v === 'object' : typeof v === typeof def) lk[k] = v;
+        }
+        const pf = Array.isArray(pr.files) ? pr.files.filter(k => PRESET_FILES.includes(k)) : [];
+        presets.push({ id: pr.id, name: pr.name.slice(0, 40), layout: LAYOUTS.includes(pr.layout) ? pr.layout : undefined, set, look: lk, files: pf });
+      }
+    }
+    const fileKeys = BACKUP_FILES.concat(presets.flatMap(pr => pr.files.map(k => presetFileKey(pr.id, k))));
     const files = {};
     if (d.files && typeof d.files === 'object') {
-      for (const k of BACKUP_FILES) if (d.files[k]) {
+      for (const k of fileKeys) if (d.files[k]) {
         try { files[k] = unpackFile(d.files[k]); } catch (e) { throw new Error((e && e.message) || 'a file in it is damaged'); }
       }
     }
-    return { settings: s, layout, look: lk, zenMinutes: Number.isFinite(zm) ? zm : null, keys: ks, files };
+    return { settings: s, layout, look: lk, zenMinutes: Number.isFinite(zm) ? zm : null, keys: ks, presets, files };
   };
 
   const importSettings = note => ui.file('.json,application/json', async f => {
@@ -139,6 +158,8 @@
       for (const k of Object.keys(keys)) delete keys[k];
       Object.assign(keys, b.keys);
       saveKeys();
+      userPresets.splice(0, userPresets.length, ...b.presets);
+      savePresets();
       // the panel built again with the new values; the note says it worked
       if (setEl) { backupMsg = 'Imported ' + f.name; rebuildSettings(); }
       else say('Imported ' + f.name);

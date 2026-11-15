@@ -3,7 +3,7 @@
 // Injected on https://music.youtube.com/* only.
 (() => {
   'use strict';
-  const VERSION = '1.9.4';
+  const VERSION = '1.9.5';
 
   /* ---------- settings ---------- */
   const PLAYER_PAGE_BAR_SPACE = '88px';          // space the player page keeps free for the bar until it's measured (follows the bar size)
@@ -13,6 +13,8 @@
   const SLIDE_FROM = '12vh';                     // how far from the bar's side the player page starts its slide
   const CLOSE_MS = 320;                          // player page close toward a top / left / right bar
   const CLOSE_EASE = 'cubic-bezier(.4, 0, 1, 1)'; // ease-in: leaves gently, then goes
+  const POP_OPEN_MS = 560;                       // left / right bar: the player page grows out of the bar's art
+  const POP_CLOSE_MS = 360;                      // ...and goes back into it
   const MINI_ART_FADE_MS = 450;                  // mobile: fade-in of YTM's own mini art after the player page closes
   const MINI_ART_DELAY_MS = 400;                 // ...starting this long after the page reports closed
   const VINYL_SPIN = [0, 40, 16, 1.8];           // vinyl: seconds per turn for the Spin choice (0 = still; 1.8 s = 33⅓ rpm)
@@ -284,7 +286,7 @@
     if (ownSlide) pp.style.setProperty('transition', 'none', 'important');   // YTM's slide jumps to its end
     animatingUntil = performance.now() + opts.duration + 100;
     document.documentElement.classList.add('am-animating');
-    pp.style.willChange = 'opacity, translate, scale';
+    pp.style.willChange = 'opacity, translate, scale, clip-path';
     const anim = pageAnim = pp.animate(frames, opts);
     const done = () => {
       if (pageAnim !== anim) return;                       // a newer animation took over
@@ -295,11 +297,39 @@
     };
     anim.finished.then(done, done);
   };
+  /* the pop (bar on the left or right): the page grows out of the bar's art and goes back into it. The art usually
+     sits outside the page (in the rail or the sidebar), so the whole page is moved and scaled, not only clipped: at the
+     start, the page's own middle square (where its big art is) is shrunk to the bar's art and laid exactly on it, with
+     the art's rounded corners; then it grows into its place while the clip opens to the whole page. The page's place is
+     measured with YTM's slide off and its transform held at none, so it is where it ends. null when the art isn't on
+     screen (then the slide is used). */
+  const popFrames = (pp, closing) => {
+    if (!settings.popPage || (posNow !== 'left' && posNow !== 'right')) return null;     // Misc > Experimental, off by default
+    const a = art.getBoundingClientRect();
+    if (!a.width || bar.classList.contains('am-idle') || bar.classList.contains('am-hidden') || bar.classList.contains('am-autohid')) return null;
+    pp.style.setProperty('transition', 'none', 'important');
+    pp.style.setProperty('transform', 'none', 'important');          // measured where it ends (the frames hold it)
+    const r = pp.getBoundingClientRect();
+    pp.style.removeProperty('transform');
+    if (!r.width || !r.height) return null;
+    const sq = Math.min(r.width, r.height), sx = (r.width - sq) / 2, sy = (r.height - sq) / 2;   // the page's middle square
+    const s = a.width / sq;
+    const tx = a.left - r.left - sx * s, ty = a.top - r.top - sy * s;
+    const rad = (parseFloat(getComputedStyle(art).borderTopLeftRadius) || 8) / s;                // the art's corners, on screen
+    const hold = { transform: 'none', visibility: 'visible', transformOrigin: '0 0' };
+    const small = { ...hold, translate: `${tx.toFixed(1)}px ${ty.toFixed(1)}px`, scale: s.toFixed(4), opacity: closing ? 0 : .9,
+      clipPath: `inset(${sy.toFixed(1)}px ${sx.toFixed(1)}px ${sy.toFixed(1)}px ${sx.toFixed(1)}px round ${rad.toFixed(1)}px)` };
+    const big = { ...hold, translate: '0px 0px', scale: '1', opacity: 1, clipPath: 'inset(0px 0px 0px 0px round 0px)' };
+    return closing ? [big, small] : [small, big];
+  };
+
   // close toward a bar that is not at the bottom (at the bottom, YTM's own slide down does it). The page's transform is
   // held at its open value and stays visible until the end, whatever YTM sets meanwhile.
   const animateClose = () => {
     const pp = playerPage();
     if (!pp || reduceMotion.matches || posNow === 'bottom' || !ytmSlides(pp)) return;
+    const pop = popFrames(pp, true);
+    if (pop) { animatePage(pp, pop, { duration: POP_CLOSE_MS, easing: CLOSE_EASE }, true); return; }
     const hold = { transform: 'none', visibility: 'visible' };
     animatePage(pp, [{ ...hold, opacity: 1, translate: '0 0', scale: '1' },
       { ...hold, opacity: 0, translate: slideFrom(), scale: '0.97' }],
@@ -333,6 +363,8 @@
     // Elsewhere its slide is switched off and ours comes from the bar's side.
     const theirs = ytmSlides(pp);
     const keep = theirs && posNow === 'bottom';
+    const pop = !keep && popFrames(pp, false);
+    if (pop) { animatePage(pp, pop, { duration: POP_OPEN_MS, easing: ANIM_EASE }, theirs); return; }
     // prep layers, pause heavy work, then animate only compositor-friendly properties
     animatePage(pp,
       keep
@@ -1904,6 +1936,8 @@
       options: [['Still', 0], ['Slow', 1], ['Medium', 2], ['33⅓ rpm', 3]], min: 0, max: 3, def: 1, dep: 'vinyl',
       css: v => ['--am-vinyl-dur', VINYL_SPIN[v] + 's'], scope: '.am-vinyl',
       note: () => 'Stops while the music is paused' },
+    { group: 'Misc', sub: 'Experimental', key: 'popPage', type: 'toggle', label: 'Player page pop', min: 0, max: 1, def: 0,
+      note: () => 'Left / right bar: the player page zooms out of the bar\'s art, and back into it' },
     // zen screen (zen.js reads these when zen opens); shown after Font / Background (see LATE_GROUPS).
     // A 'choice' is a row of segment buttons; its value is the number next to each label.
     { group: 'Zen', sub: 'Look', key: 'zenLayout', type: 'choice', label: 'Layout', options: [['Auto', 0], ['Wide', 1], ['4:3', 2]],
@@ -1934,6 +1968,8 @@
     // how this panel looks: categories on the side (1, Modern) or the original long list (0, Legacy). No group: it is
     // the switch in the panel's footer, not a row
     { key: 'setLayout', min: 0, max: 1, def: 1 },
+    // hqart.js: shown on the Look page (themes.js)
+    { key: 'hqArt', min: 0, max: 1, def: 0 },
     // share.js: the Koutube notice was answered with "Don't show this again"
     { key: 'koutubeOk', min: 0, max: 1, def: 0 },
   ];
@@ -2258,6 +2294,7 @@
     });
     const showSeg = () => segBtns.forEach(([b, m]) => b.classList.toggle('am-on', layoutNow === m));
     showSeg();
+    buildThemeSettings(p);                         // Look: presets, art (themes.js)
     const lookRefresh = buildLookSettings(p);      // Font + Background groups
     const keysRefresh = buildKeySettings(p);       // Shortcuts (keys.js)
     addGroups(SETTINGS.filter(s => LATE_GROUPS.includes(s.group)));
@@ -3196,6 +3233,27 @@
     ctx.restore();
   };
 
+  /* the finished background: the paint layer rendered at the screen's real pixel size (at most 2560 px on the long
+     side), saved as one WebP picture with its strokes (so the maker can edit it again) and set as the background.
+     Used by the maker's Apply and by the Look presets (themes.js), which paint their strokes from a few numbers. */
+  const saveGradientBg = async (layer, g) => {
+    const dpr = devicePixelRatio || 1;
+    const k = Math.min(1, 2560 / (Math.max(innerWidth, innerHeight) * dpr));
+    const F = document.createElement('canvas');
+    F.width = Math.round(innerWidth * dpr * k);
+    F.height = Math.round(innerHeight * dpr * k);
+    gmRender(F.getContext('2d'), F.width, F.height, layer, g);
+    const toBlob = (c, type, qual) => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('toBlob')), type, qual));
+    const img = await toBlob(F, 'image/webp', 0.9);
+    F.width = F.height = 0;
+    await idb.set('bg-gradient', img);
+    await idb.set('grad-paint', await toBlob(layer, 'image/png'));
+    look.grad = Object.assign({}, g);
+    look.bg = 'gradient';
+    saveLook();
+    await applyBg();
+  };
+
   let gmEl = null;
   const openGradientMaker = async onDone => {
     if (gmEl) return;
@@ -3382,22 +3440,7 @@
       apply.disabled = true;
       apply.textContent = 'Saving…';
       try {
-        // final picture at the screen's real pixel size (at most 2560 px on the long side)
-        const dpr = devicePixelRatio || 1;
-        const k = Math.min(1, 2560 / (Math.max(innerWidth, innerHeight) * dpr));
-        const F = document.createElement('canvas');
-        F.width = Math.round(innerWidth * dpr * k);
-        F.height = Math.round(innerHeight * dpr * k);
-        gmRender(F.getContext('2d'), F.width, F.height, layer, g);
-        const toBlob = (c, type, qual) => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('toBlob')), type, qual));
-        const img = await toBlob(F, 'image/webp', 0.9);
-        F.width = F.height = 0;
-        await idb.set('bg-gradient', img);
-        await idb.set('grad-paint', await toBlob(layer, 'image/png'));
-        look.grad = Object.assign({}, g);
-        look.bg = 'gradient';
-        saveLook();
-        await applyBg();
+        await saveGradientBg(layer, g);
         close();
         if (onDone) onDone();
       } catch (e) {
@@ -5031,6 +5074,74 @@
     document.querySelectorAll('.am-vinyl-unclip').forEach(n => n.classList.remove('am-vinyl-unclip'));
     html.classList.remove('am-vinyl-on', 'am-vinyl-paused');
   };
+  /* ---------- high-quality art (Bar & menus > Art, off by default) ---------- */
+  // YTM asks Google's image server for small pictures. Two kinds of address:
+  // - lh3.googleusercontent.com / yt3.ggpht.com (song and album art): the size is in the address (=w60-h60..., =s120):
+  //   asked again at the size shown x the screen's pixel ratio, up to 1200.
+  // - i.ytimg.com/vi/<id>/... (videos, and songs that only have a video's thumbnail): maxresdefault.jpg, else hq720.jpg.
+  //   A missing one is an error or a 120 x 90 gray picture; then the next one is tried, and at the end the small one stays.
+  // The bigger picture is loaded first and only then put in, so nothing flashes or goes blank. The results are kept
+  // (small address -> big one, or '' when there is none), so each picture is asked for once.
+  // Only pictures on screen: the player page, the queue, and the song rows and cards of the page.
+  const HQ_MAX = 1200, HQ_CACHE = 600, HQ_PER_TICK = 40;
+  const hqCache = new Map(), hqPending = new Set();
+  const hqSize = px => Math.min(HQ_MAX, Math.max(120, Math.ceil(px * (devicePixelRatio || 1) / 60) * 60));
+  const hqCandidates = (src, px) => {
+    let m;
+    if (/^https:\/\/(lh\d+\.googleusercontent\.com|yt\d+\.ggpht\.com)\//.test(src)) {
+      const n = hqSize(px);
+      if ((m = src.match(/=w(\d+)-h(\d+)/))) return Math.min(+m[1], +m[2]) >= n ? [] : [src.replace(/=w\d+-h\d+/, `=w${n}-h${n}`)];
+      if ((m = src.match(/=s(\d+)/))) return +m[1] >= n ? [] : [src.replace(/=s\d+/, `=s${n}`)];
+      return [];
+    }
+    if ((m = src.match(/^https:\/\/i\d?\.ytimg\.com\/vi(?:_webp)?\/([\w-]{11})\/(default|mqdefault|hqdefault|sddefault|hq720|maxresdefault)/))) {
+      if (m[2] === 'maxresdefault' || m[2] === 'hq720') return [];
+      return [`https://i.ytimg.com/vi/${m[1]}/maxresdefault.jpg`, `https://i.ytimg.com/vi/${m[1]}/hq720.jpg`];
+    }
+    return [];
+  };
+  const hqLoad = (src, cands) => {
+    if (!cands.length) { hqCache.set(src, ''); return; }
+    hqPending.add(src);
+    const done = big => {
+      hqPending.delete(src);
+      if (hqCache.size >= HQ_CACHE) hqCache.delete(hqCache.keys().next().value);
+      hqCache.set(src, big);
+    };
+    const next = i => {
+      if (i >= cands.length) { done(''); return; }
+      const im = new Image();
+      im.onload = () => { if (im.naturalWidth <= 120) next(i + 1); else done(cands[i]); };   // 120 x 90: the "missing" picture
+      im.onerror = () => next(i + 1);
+      im.src = cands[i];
+    };
+    next(0);
+  };
+  // the address to show for src at px wide: the big one once it has loaded, else src (and the loading starts)
+  const hqFor = (src, px) => {
+    if (!settings.hqArt || !src) return src;
+    if (hqCache.has(src)) return hqCache.get(src) || src;
+    if (!hqPending.has(src)) hqLoad(src, hqCandidates(src, px));
+    return src;
+  };
+  const HQ_IMGS = 'ytmusic-player-page #song-image img, ytmusic-player #song-image img, ytmusic-player-queue-item img, ' +
+    'ytmusic-responsive-list-item-renderer img, ytmusic-two-row-item-renderer img, ytmusic-responsive-header-renderer img';
+  const syncHqArt = () => {
+    if (!settings.hqArt) return;
+    let n = 0;
+    for (const img of document.querySelectorAll(HQ_IMGS)) {
+      const src = img.getAttribute('src') || '';
+      if (!/^https:/.test(src)) continue;
+      const r = img.getBoundingClientRect();
+      if (r.width < 24 || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) continue;   // on screen only
+      const big = hqFor(src, Math.max(r.width, r.height));
+      if (big !== src) {
+        if (img.hasAttribute('srcset')) img.removeAttribute('srcset');   // a srcset would win over the new src
+        img.src = big;
+      }
+      if (++n >= HQ_PER_TICK) break;
+    }
+  };
   /* ---------- "What's new": a popup with the changes, after an update ---------- */
   // The version last seen is kept in localStorage ("am-seen-version"). When the script's VERSION (put in by build.mjs
   // from the manifest) is newer, the popup lists every version since then, once, a moment after the page has loaded.
@@ -5038,6 +5149,13 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.5', date: '2026-11-15', title: 'Looks and sharper art', items: [
+      'A new Look page in the settings: presets that set up everything in one click: a gradient background, where the bar goes and its layout, the glass and the font. Aurora, Sunset, Nebula, Candy and Ember. They hide the page banners, so the gradient shows everywhere. Their gradients can be edited in the gradient maker afterwards',
+      'Save your current look as your own preset, with the bar\'s place too (it is in the settings backup)',
+      'High-quality art (Look > Art, off by default): sharper art on the player page, in the queue and in lists',
+      'Experimental (Misc, off by default): with the bar on the left or right, the player page zooms out of the bar\'s art and back into it',
+      'Fixed: the up-next peek sometimes showed a song from earlier in the queue instead of the next one',
+    ] },
     { v: '1.9.4', date: '2026-11-14', title: 'Links for Discord, shortcuts and a command palette', items: [
       'Share in the 3-dot menus opens a small popup of links: YouTube (plays inline in Discord), YouTube Music, short, Koutube (a richer Discord preview, through a third-party service) and Markdown, plus More for YouTube Music\'s own share options. “Start at” makes the link start where you are in the song',
       'Shortcuts: Ctrl+K opens a command palette for every action and setting. Change any key in Settings > Shortcuts',
@@ -5272,7 +5390,9 @@
   const exportSettings = async note => {
     try {
       const files = {};
-      for (const k of BACKUP_FILES) {
+      // the look's files, and the files kept with your own presets (themes.js)
+      const presetKeys = userPresets.flatMap(pr => (pr.files || []).map(k => presetFileKey(pr.id, k)));
+      for (const k of BACKUP_FILES.concat(presetKeys)) {
         let v = null;
         try { v = await idb.get(k); } catch {}
         const p = v ? await packFile(v) : null;
@@ -5285,6 +5405,7 @@
         look: JSON.parse(JSON.stringify(look)),
         zenMinutes: zenMins(),
         keys: Object.assign({}, keys),
+        presets: JSON.parse(JSON.stringify(userPresets)),
         files,
       };
       const name = 'r1ytm-settings-' + new Date().toISOString().slice(0, 10) + '.json';
@@ -5341,13 +5462,29 @@
         if (typeof v === 'string' && /^((Ctrl|Alt|Shift|Meta)\+)*[A-Za-z0-9]*$/.test(v)) ks[a.id] = v;
       }
     }
+    // your own presets: id, name, and the glass / look values (checked when one is applied, like any setting)
+    const presets = [];
+    if (Array.isArray(d.presets)) {
+      for (const pr of d.presets) {
+        if (!pr || typeof pr !== 'object' || typeof pr.id !== 'string' || !/^[\w-]{1,24}$/.test(pr.id) || typeof pr.name !== 'string') continue;
+        const set = {}, lk = {};
+        if (pr.set && typeof pr.set === 'object') for (const k of PRESET_SET) if (Number.isFinite(Number(pr.set[k]))) set[k] = Number(pr.set[k]);
+        if (pr.look && typeof pr.look === 'object') for (const k of PRESET_LOOK) if (k in pr.look) {
+          const v = pr.look[k], def = LOOK_DEF[k];
+          if (def === null ? v === null || typeof v === 'object' : typeof v === typeof def) lk[k] = v;
+        }
+        const pf = Array.isArray(pr.files) ? pr.files.filter(k => PRESET_FILES.includes(k)) : [];
+        presets.push({ id: pr.id, name: pr.name.slice(0, 40), layout: LAYOUTS.includes(pr.layout) ? pr.layout : undefined, set, look: lk, files: pf });
+      }
+    }
+    const fileKeys = BACKUP_FILES.concat(presets.flatMap(pr => pr.files.map(k => presetFileKey(pr.id, k))));
     const files = {};
     if (d.files && typeof d.files === 'object') {
-      for (const k of BACKUP_FILES) if (d.files[k]) {
+      for (const k of fileKeys) if (d.files[k]) {
         try { files[k] = unpackFile(d.files[k]); } catch (e) { throw new Error((e && e.message) || 'a file in it is damaged'); }
       }
     }
-    return { settings: s, layout, look: lk, zenMinutes: Number.isFinite(zm) ? zm : null, keys: ks, files };
+    return { settings: s, layout, look: lk, zenMinutes: Number.isFinite(zm) ? zm : null, keys: ks, presets, files };
   };
 
   const importSettings = note => ui.file('.json,application/json', async f => {
@@ -5377,6 +5514,8 @@
       for (const k of Object.keys(keys)) delete keys[k];
       Object.assign(keys, b.keys);
       saveKeys();
+      userPresets.splice(0, userPresets.length, ...b.presets);
+      savePresets();
       // the panel built again with the new values; the note says it worked
       if (setEl) { backupMsg = 'Imported ' + f.name; rebuildSettings(); }
       else say('Imported ' + f.name);
@@ -5829,9 +5968,12 @@
 
   let peekT = 0, peekOn = false, peekRaf = 0, peekWait = 0, peekG = null;
 
+  // the queue in play order, one row per entry: rows inside something hidden (the other version of a song / video
+  // pair, which YTM keeps next to it) and rows not drawn are left out
   const queueItems = () => {
     const page = playerPage();
-    return [...(page || document).querySelectorAll('ytmusic-player-queue-item')].filter(n => n.data);
+    return [...(page || document).querySelectorAll('ytmusic-player-queue-item')]
+      .filter(n => n.data && !n.closest('[hidden]') && getComputedStyle(n).display !== 'none');
   };
   const itemInfo = n => {
     const d = n.data || {};
@@ -5840,7 +5982,12 @@
   };
   const nextSong = () => {
     const items = queueItems();
-    const i = items.findIndex(n => n.hasAttribute('selected'));
+    // the row playing now: the one with the speaker icon (play state playing / paused); else the video playing now;
+    // YTM's "selected" mark last (it can stay on another row, e.g. the one the queue was started from)
+    const vid = curVideoId();
+    let i = items.findIndex(n => /^(playing|paused|loading)$/.test(n.getAttribute('play-button-state') || ''));
+    if (i < 0 && vid) i = items.findIndex(n => n.data.videoId === vid);
+    if (i < 0) i = items.findIndex(n => n.hasAttribute('selected'));
     if (i < 0) return null;
     if (rep.classList.contains('am-one')) return Object.assign(itemInfo(items[i]), { head: 'Repeat one' });
     if (i + 1 < items.length) return Object.assign(itemInfo(items[i + 1]), { head: 'Up next' });
@@ -6311,6 +6458,225 @@
     .am-pal-empty { padding: 14px; font-size: 13px; color: rgb(255 255 255 / .5); }
     @media (prefers-reduced-motion: reduce) { .am-pal-back, .am-pal { animation: none; } }
   `;
+  /* ---------- theme presets (settings page "Look") ---------- */
+  // A preset sets the glass (the bar and menu opacity / blur, refraction), the background and the font together. After
+  // applying one, every value can be changed as usual. "Save current look" keeps the look as a preset of your own
+  // (localStorage "am-presets"); its font, image or gradient file is copied into IndexedDB with it ("preset:<id>:<key>"),
+  // so changing your background later doesn't change the preset. 2.0's color schemes are planned on this same format.
+  const PRESET_SET = ['barAlpha', 'barBlur', 'menuAlpha', 'menuBlur', 'refract', 'refractStrength', 'barPos', 'barFloat'];
+  const PRESET_LOOK = ['font', 'fontName', 'fontFile', 'fontScope', 'bg', 'bgColor', 'bgDim', 'bgBlur', 'bgImageName', 'grad'];
+  const PRESET_FILES = ['font', 'bg-image', 'bg-gradient', 'grad-paint'];
+  /* built-in presets: a whole setup each, the glass, the bar's place (pos 0 bottom, 1 top, 2 left, 3 right) and layout,
+     a font, and a gradient. A gradient is kept as data, not as a picture: its base color, a few glows (dabs: x, y as
+     a share of the screen, size as a share of its width, color, strength) and the gradient maker's effects. It is
+     painted and rendered by the gradient maker's own engine (gmRender) when the preset is applied, and can then be
+     edited in the maker like any gradient. pv: the font's kind, for the preview (nothing is downloaded for it). */
+  const BUILTIN_PRESETS = [
+    { id: 'aurora', name: 'Aurora', pos: 0, layout: 'compact', float: 1, font: 'Manrope', pv: 'system-ui, sans-serif',
+      set: { barAlpha: 16, barBlur: 30, menuAlpha: 70, menuBlur: 44, refract: 0 },
+      grad: { base: '#04060d', dabs: [[.18, .82, .75, '#00c7be', .55], [.55, .35, .6, '#34c759', .38], [.86, .18, .7, '#5856d6', .55], [.5, 1, .55, '#30b0ff', .35]],
+        fx: { mix: 60, sat: 130, bri: 100, bloom: 35, grain: 12, vig: 30, glass: 'none' } } },
+    { id: 'sunset', name: 'Sunset', pos: 1, layout: 'full', float: 1, font: 'Inter', pv: 'system-ui, sans-serif',   // Inter: the closest Google font to SF Pro
+      set: { barAlpha: 22, barBlur: 34, menuAlpha: 72, menuBlur: 44, refract: 0 },
+      grad: { base: '#120814', dabs: [[.15, .22, .65, '#ff9500', .55], [.5, .58, .7, '#ff2d55', .5], [.9, .82, .7, '#af52de', .5], [.78, .12, .4, '#ffcc00', .3]],
+        fx: { mix: 55, sat: 125, bri: 100, bloom: 30, grain: 10, vig: 25, glass: 'reeded', glassSize: 35 } } },
+    { id: 'nebula', name: 'Nebula', pos: 2, layout: 'compact', float: 1, font: 'Space Grotesk', pv: 'system-ui, sans-serif',
+      set: { barAlpha: 24, barBlur: 36, menuAlpha: 76, menuBlur: 48, refract: 0 },
+      grad: { base: '#04030c', dabs: [[.3, .3, .55, '#5856d6', .6], [.72, .62, .6, '#ff6ec7', .45], [.45, .88, .45, '#007aff', .45], [.88, .14, .35, '#af52de', .4]],
+        fx: { mix: 45, sat: 140, bri: 100, bloom: 45, grain: 18, vig: 40, glass: 'none' } } },
+    { id: 'candy', name: 'Candy', pos: 1, layout: 'compact', float: 1, font: 'Pixelify Sans', pv: 'ui-monospace, monospace',
+      set: { barAlpha: 26, barBlur: 32, menuAlpha: 76, menuBlur: 44, refract: 0 },
+      grad: { base: '#1a0f1f', dabs: [[.2, .3, .7, '#ff6ec7', .45], [.82, .38, .7, '#ff2d55', .35], [.5, .88, .7, '#ff8fab', .4], [.92, .92, .5, '#d6214f', .3]],
+        fx: { mix: 65, sat: 105, bri: 110, bloom: 30, grain: 6, vig: 15, glass: 'frosted' } } },
+    { id: 'ember', name: 'Ember', pos: 0, layout: 'classic', float: 0, font: 'JetBrains Mono', pv: 'ui-monospace, monospace',
+      set: { barAlpha: 40, barBlur: 24, menuAlpha: 84, menuBlur: 32, refract: 0 },
+      grad: { base: '#0a0303', dabs: [[.5, 1.02, .95, '#ff5e3a', .55], [.18, .92, .5, '#ff2d55', .4], [.82, .96, .5, '#ff9500', .4]],
+        fx: { mix: 55, sat: 130, bri: 100, bloom: 40, grain: 20, vig: 45, glass: 'waves', glassSize: 40 } } },
+    { id: 'default', name: 'Default', pos: 0, layout: 'full', float: 1, font: '', pv: '',
+      set: { barAlpha: 28, barBlur: 28, menuAlpha: 72, menuBlur: 40, refract: 0 }, grad: null },
+  ];
+  // the glows of a built-in gradient, painted on a layer the size the gradient maker uses (1024 wide, the screen's shape)
+  const glowDab = (ctx, x, y, size, color, alpha, hard = .2) => {
+    const r = size / 2, [R, G, B] = [1, 3, 5].map(i => parseInt(color.slice(i, i + 2), 16));
+    ctx.globalCompositeOperation = 'lighter';
+    const gr = ctx.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, `rgba(${R},${G},${B},${alpha})`);
+    gr.addColorStop(hard, `rgba(${R},${G},${B},${alpha})`);
+    gr.addColorStop(hard + (1 - hard) * .5, `rgba(${R},${G},${B},${alpha * .35})`);
+    gr.addColorStop(1, `rgba(${R},${G},${B},0)`);
+    ctx.fillStyle = gr;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  };
+  const paintGrad = (gr, w, h) => {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const x = c.getContext('2d');
+    for (const [px, py, sz, col, al] of gr.dabs) glowDab(x, px * w, py * h, sz * w, col, al);
+    return c;
+  };
+  const gradOf = gr => Object.assign({}, GRAD_DEF, { base: gr.base }, gr.fx);
+  const userPresets = (() => { try { const a = JSON.parse(store.get('am-presets', '[]')); return Array.isArray(a) ? a : []; } catch { return []; } })();
+  const savePresets = () => store.set('am-presets', JSON.stringify(userPresets));
+  const presetFileKey = (id, k) => `preset:${id}:${k}`;
+
+  const applyPreset = async pr => {
+    const builtin = !!pr.grad || pr.id === 'default';
+    // a user preset's files first (into the slots the look reads), so the look can use them at once
+    if (pr.files) for (const k of pr.files) {
+      try { const v = await idb.get(presetFileKey(pr.id, k)); if (v) await idb.set(k, v); } catch {}
+    }
+    const was = Object.assign({}, settings);
+    const set = Object.assign({}, pr.set, builtin ? { barPos: pr.pos, barFloat: pr.float } : {});
+    for (const k of PRESET_SET) if (k in set) {
+      const s = SETTINGS.find(x => x.key === k);
+      settings[k] = Math.min(s.max, Math.max(s.min, Number(set[k]) || 0));
+    }
+    if (!canRefract) settings.refract = was.refract;      // refraction needs Chromium: leave it as it is elsewhere
+    applySettings();
+    saveSettings();
+    for (const s of SETTINGS) if (s.change && was[s.key] !== settings[s.key]) { try { s.change(); } catch {} }
+    if (LAYOUTS.includes(pr.layout)) { applyMode(pr.layout); placeBar(); hideBase(); }
+    if (builtin) {
+      Object.assign(look, pr.font ? { font: 'google', fontName: pr.font } : { font: 'default', fontName: '' });
+      // the gradient presets hide the page banners, so the gradient shows at the top of pages too (Default: banners back)
+      look.hideBanner = pr.grad ? 1 : 0;
+      applyBanner();
+      if (pr.grad) {
+        const PW = 1024, PH = Math.max(1, Math.round(PW * innerHeight / innerWidth));
+        try { await saveGradientBg(paintGrad(pr.grad, PW, PH), gradOf(pr.grad)); }
+        catch (e) { console.warn('[am-bar] preset gradient failed', e); }
+      } else { look.bg = 'default'; saveLook(); applyBg(); }
+    } else {
+      const lk = Object.assign({}, pr.look);
+      if (!('fontScope' in lk)) lk.fontScope = look.fontScope;
+      Object.assign(look, lk);
+      applyBg();
+    }
+    saveLook();
+    if (fileFace) { document.fonts.delete(fileFace); fileFace = null; }
+    applyFont();
+    toast('Look: ' + pr.name);
+  };
+  const saveCurrentPreset = async name => {
+    const id = Date.now().toString(36);
+    const pr = { id, name: name.trim().slice(0, 40) || 'My look', layout: layoutNow, set: {}, look: {}, files: [] };
+    for (const k of PRESET_SET) pr.set[k] = settings[k];
+    for (const k of PRESET_LOOK) pr.look[k] = JSON.parse(JSON.stringify(look[k] === undefined ? null : look[k]));
+    const needs = [look.font === 'file' && 'font', look.bg === 'image' && 'bg-image', look.bg === 'gradient' && 'bg-gradient',
+      look.bg === 'gradient' && 'grad-paint'].filter(Boolean);
+    for (const k of needs) {
+      try { const v = await idb.get(k); if (v) { await idb.set(presetFileKey(id, k), v); pr.files.push(k); } } catch {}
+    }
+    userPresets.push(pr);
+    savePresets();
+    return pr;
+  };
+  const deletePreset = async pr => {
+    const i = userPresets.indexOf(pr);
+    if (i >= 0) userPresets.splice(i, 1);
+    savePresets();
+    for (const k of pr.files || []) { try { await idb.set(presetFileKey(pr.id, k), null); } catch {} }
+  };
+
+  // the "Look" page of the settings (built by openSettings, before Font / Background)
+  const buildThemeSettings = p => {
+    el('div', 'am-set-group', p).textContent = 'Look';
+    el('div', 'am-set-subhead', p).textContent = 'Presets';
+    const card = el('div', 'am-set-card am-th-card', p);
+    const grid = el('div', 'am-th-grid', card);
+    const tile = (pr, mine) => {
+      const t = el('button', 'am-th', grid);
+      t.title = 'Apply “' + pr.name + '”';
+      const pv = el('div', 'am-th-pv', t);
+      if (pr.grad) {
+        // the gradient itself, rendered small with the maker's engine (2x for sharp screens)
+        const c = el('canvas', 'am-th-cv', pv);
+        c.width = 240; c.height = 150;
+        try { gmRender(c.getContext('2d'), 240, 150, paintGrad(pr.grad, 240, 150), gradOf(pr.grad)); } catch {}
+      } else if (mine && (pr.look.bg === 'image' || pr.look.bg === 'gradient')) {
+        idb.get(presetFileKey(pr.id, pr.look.bg === 'image' ? 'bg-image' : 'bg-gradient')).then(b => {
+          if (b) { const u = URL.createObjectURL(b); pv.style.backgroundImage = `url("${u}")`; setTimeout(() => URL.revokeObjectURL(u), 60000); }
+        }).catch(() => {});
+        pv.style.backgroundColor = '#2b2140';
+      } else pv.style.backgroundColor = mine && pr.look.bg === 'color' ? pr.look.bgColor : '#0f0f0f';
+      // the bar, where the preset puts it, in its layout and glass
+      const pos = ['bottom', 'top', 'left', 'right'][pr.pos ?? (pr.set && pr.set.barPos) ?? 0] || 'bottom';
+      const lay = pr.layout || 'full', fl = pr.float ?? (pr.set && pr.set.barFloat) ?? 1;
+      const mb = el('div', `am-th-bar am-th-${pos} am-th-${lay}${fl ? '' : ' am-th-dock'}`, pv);
+      mb.style.background = `rgb(40 40 40 / ${((pr.set && pr.set.barAlpha) ?? 28) / 100 + .1})`;
+      const aa = el('span', 'am-th-aa', mb);
+      aa.textContent = 'Aa';
+      if (pr.pv) aa.style.fontFamily = pr.pv;
+      el('div', 'am-th-name', t).textContent = pr.name;
+      t.addEventListener('click', async () => {
+        t.classList.add('am-th-busy');
+        await applyPreset(pr);
+        rebuildSettings();
+      });
+      if (mine) {
+        const x = el('span', 'am-th-del', t);
+        x.title = 'Delete this preset';
+        x.append(svg(P_CLOSE));
+        x.addEventListener('click', async e => { e.stopPropagation(); await deletePreset(pr); rebuildSettings(); });
+      }
+    };
+    BUILTIN_PRESETS.forEach(pr => tile(pr, false));
+    userPresets.forEach(pr => tile(pr, true));
+    // save the current look
+    const row = el('div', 'am-set-row am-set-inline am-th-save', card);
+    const inp = el('input', 'am-set-input', row);
+    inp.placeholder = 'Name for the current look';
+    inp.maxLength = 40;
+    const save = el('button', 'am-set-btn am-set-soft', row);
+    save.textContent = 'Save current look';
+    const doSave = async () => { await saveCurrentPreset(inp.value || 'My look ' + (userPresets.length + 1)); rebuildSettings(); };
+    save.addEventListener('click', doSave);
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSave(); } });
+    el('div', 'am-set-note am-th-note', card).textContent = "A preset sets the background, the bar's place and layout, the glass and the font. Change anything after applying it; a preset's gradient can be edited under Background.";
+    // art
+    el('div', 'am-set-subhead', p).textContent = 'Art';
+    const aCard = el('div', 'am-set-card', p);
+    ui.toggle(aCard, 'High-quality art', () => settings.hqArt, v => { settings.hqArt = v; saveSettings(); syncHqArt(); });
+    const an = el('div', 'am-set-note', aCard);
+    an.textContent = 'Sharper art on the player page, in the queue and in lists. Uses more data';
+    an.style.margin = '-4px 0 10px';
+  };
+
+  const themeStyle = el('style', null, document.head);
+  themeStyle.textContent = `
+    .am-th-card { padding: 12px 14px; }
+    .am-th-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+    .am-th { all: unset; position: relative; cursor: pointer; border-radius: 12px; padding: 6px; background: rgb(255 255 255 / .04);
+      transition: background .15s; }
+    .am-th:hover, .am-th:focus-visible { background: rgb(255 255 255 / .1); }
+    .am-th-pv { position: relative; height: 75px; border-radius: 8px; overflow: hidden; background: center / cover no-repeat;
+      box-shadow: inset 0 0 0 1px rgb(255 255 255 / .08); }
+    .am-th-cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    /* the mini bar */
+    .am-th-bar { position: absolute; display: flex; align-items: center; justify-content: center; box-sizing: border-box;
+      border: 1px solid rgb(255 255 255 / .16); border-radius: 6px; backdrop-filter: blur(4px); }
+    .am-th-bottom, .am-th-top { left: 6px; right: 6px; height: 16px; }
+    .am-th-bottom { bottom: 5px; } .am-th-top { top: 5px; }
+    .am-th-bottom.am-th-compact, .am-th-top.am-th-compact { left: 22%; right: 22%; }
+    .am-th-left, .am-th-right { top: 6px; bottom: 6px; width: 14px; }
+    .am-th-left { left: 5px; } .am-th-right { right: 5px; }
+    .am-th-left.am-th-compact, .am-th-right.am-th-compact { top: 20%; bottom: 8%; }
+    .am-th-dock.am-th-bottom { left: 0; right: 0; bottom: 0; border-radius: 0; border-width: 1px 0 0; }
+    .am-th-dock.am-th-top { left: 0; right: 0; top: 0; border-radius: 0; border-width: 0 0 1px; }
+    .am-th-left .am-th-aa, .am-th-right .am-th-aa { display: none; }
+    .am-th-aa { font-size: 10px; font-weight: 700; color: #fff; }
+    .am-th.am-th-busy { opacity: .6; pointer-events: none; }
+    .am-th-name { font-size: 12.5px; margin: 6px 2px 1px; color: rgb(255 255 255 / .85); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .am-th-del { position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+      background: rgb(0 0 0 / .55); opacity: 0; transition: opacity .15s; }
+    .am-th:hover .am-th-del { opacity: 1; }
+    .am-th-del svg { width: 14px; height: 14px; fill: #fff; }
+    .am-th-save { margin-top: 12px; border-top: 1px solid rgb(255 255 255 / .07); padding-top: 12px; }
+    .am-th-save .am-set-input { flex: 1; min-width: 0; }
+    .am-th-note { margin-top: 8px; }
+  `;
   /* ---------- sync loop ---------- */
   let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
   const timer = setInterval(() => {
@@ -6333,6 +6699,7 @@
     }
     if (tick % 4 === 1 && !busy && curPage === 'artist') syncArtist();
     if (tick % 4 === 3 && !busy) roomForPlaying();        // room for the playing row's overlay
+    if (tick % 4 === 1 && !busy) syncHqArt();             // high-quality art (off by default)
     placeBar();                                           // bottom / top, in or under the header
     syncSearch();
     updateRefractMap();                                   // no-op unless refraction is on and the bar changed size
@@ -6428,7 +6795,7 @@
     closePalette();
     promptObs.disconnect();
     peekReset();
-    for (const n of [toastEl, peekEl, pFly, pEdge, pShade, shareStyle, peekStyle, ahStyle, keyStyle]) n.remove();
+    for (const n of [toastEl, peekEl, pFly, pEdge, pShade, shareStyle, peekStyle, ahStyle, keyStyle, themeStyle]) n.remove();
     bar.remove();
     for (const list of guideEntries.values()) list.forEach(e => e.g.remove());
     for (const n of [...roomed.keys()]) unroom(n);

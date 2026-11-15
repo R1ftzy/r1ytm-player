@@ -22,7 +22,7 @@
     if (ownSlide) pp.style.setProperty('transition', 'none', 'important');   // YTM's slide jumps to its end
     animatingUntil = performance.now() + opts.duration + 100;
     document.documentElement.classList.add('am-animating');
-    pp.style.willChange = 'opacity, translate, scale';
+    pp.style.willChange = 'opacity, translate, scale, clip-path';
     const anim = pageAnim = pp.animate(frames, opts);
     const done = () => {
       if (pageAnim !== anim) return;                       // a newer animation took over
@@ -33,11 +33,39 @@
     };
     anim.finished.then(done, done);
   };
+  /* the pop (bar on the left or right): the page grows out of the bar's art and goes back into it. The art usually
+     sits outside the page (in the rail or the sidebar), so the whole page is moved and scaled, not only clipped: at the
+     start, the page's own middle square (where its big art is) is shrunk to the bar's art and laid exactly on it, with
+     the art's rounded corners; then it grows into its place while the clip opens to the whole page. The page's place is
+     measured with YTM's slide off and its transform held at none, so it is where it ends. null when the art isn't on
+     screen (then the slide is used). */
+  const popFrames = (pp, closing) => {
+    if (!settings.popPage || (posNow !== 'left' && posNow !== 'right')) return null;     // Misc > Experimental, off by default
+    const a = art.getBoundingClientRect();
+    if (!a.width || bar.classList.contains('am-idle') || bar.classList.contains('am-hidden') || bar.classList.contains('am-autohid')) return null;
+    pp.style.setProperty('transition', 'none', 'important');
+    pp.style.setProperty('transform', 'none', 'important');          // measured where it ends (the frames hold it)
+    const r = pp.getBoundingClientRect();
+    pp.style.removeProperty('transform');
+    if (!r.width || !r.height) return null;
+    const sq = Math.min(r.width, r.height), sx = (r.width - sq) / 2, sy = (r.height - sq) / 2;   // the page's middle square
+    const s = a.width / sq;
+    const tx = a.left - r.left - sx * s, ty = a.top - r.top - sy * s;
+    const rad = (parseFloat(getComputedStyle(art).borderTopLeftRadius) || 8) / s;                // the art's corners, on screen
+    const hold = { transform: 'none', visibility: 'visible', transformOrigin: '0 0' };
+    const small = { ...hold, translate: `${tx.toFixed(1)}px ${ty.toFixed(1)}px`, scale: s.toFixed(4), opacity: closing ? 0 : .9,
+      clipPath: `inset(${sy.toFixed(1)}px ${sx.toFixed(1)}px ${sy.toFixed(1)}px ${sx.toFixed(1)}px round ${rad.toFixed(1)}px)` };
+    const big = { ...hold, translate: '0px 0px', scale: '1', opacity: 1, clipPath: 'inset(0px 0px 0px 0px round 0px)' };
+    return closing ? [big, small] : [small, big];
+  };
+
   // close toward a bar that is not at the bottom (at the bottom, YTM's own slide down does it). The page's transform is
   // held at its open value and stays visible until the end, whatever YTM sets meanwhile.
   const animateClose = () => {
     const pp = playerPage();
     if (!pp || reduceMotion.matches || posNow === 'bottom' || !ytmSlides(pp)) return;
+    const pop = popFrames(pp, true);
+    if (pop) { animatePage(pp, pop, { duration: POP_CLOSE_MS, easing: CLOSE_EASE }, true); return; }
     const hold = { transform: 'none', visibility: 'visible' };
     animatePage(pp, [{ ...hold, opacity: 1, translate: '0 0', scale: '1' },
       { ...hold, opacity: 0, translate: slideFrom(), scale: '0.97' }],
@@ -71,6 +99,8 @@
     // Elsewhere its slide is switched off and ours comes from the bar's side.
     const theirs = ytmSlides(pp);
     const keep = theirs && posNow === 'bottom';
+    const pop = !keep && popFrames(pp, false);
+    if (pop) { animatePage(pp, pop, { duration: POP_OPEN_MS, easing: ANIM_EASE }, theirs); return; }
     // prep layers, pause heavy work, then animate only compositor-friendly properties
     animatePage(pp,
       keep

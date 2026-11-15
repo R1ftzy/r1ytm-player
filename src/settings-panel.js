@@ -79,6 +79,8 @@
       options: [['Still', 0], ['Slow', 1], ['Medium', 2], ['33⅓ rpm', 3]], min: 0, max: 3, def: 1, dep: 'vinyl',
       css: v => ['--am-vinyl-dur', VINYL_SPIN[v] + 's'], scope: '.am-vinyl',
       note: () => 'Stops while the music is paused' },
+    { group: 'Misc', sub: 'Experimental', key: 'popPage', type: 'toggle', label: 'Player page pop', min: 0, max: 1, def: 0,
+      note: () => 'Left / right bar: the player page zooms out of the bar\'s art, and back into it' },
     // zen screen (zen.js reads these when zen opens); shown after Font / Background (see LATE_GROUPS).
     // A 'choice' is a row of segment buttons; its value is the number next to each label.
     { group: 'Zen', sub: 'Look', key: 'zenLayout', type: 'choice', label: 'Layout', options: [['Auto', 0], ['Wide', 1], ['4:3', 2]],
@@ -109,6 +111,8 @@
     // how this panel looks: categories on the side (1, Modern) or the original long list (0, Legacy). No group: it is
     // the switch in the panel's footer, not a row
     { key: 'setLayout', min: 0, max: 1, def: 1 },
+    // hqart.js: shown on the Look page (themes.js)
+    { key: 'hqArt', min: 0, max: 1, def: 0 },
     // share.js: the Koutube notice was answered with "Don't show this again"
     { key: 'koutubeOk', min: 0, max: 1, def: 0 },
   ];
@@ -433,6 +437,7 @@
     });
     const showSeg = () => segBtns.forEach(([b, m]) => b.classList.toggle('am-on', layoutNow === m));
     showSeg();
+    buildThemeSettings(p);                         // Look: presets, art (themes.js)
     const lookRefresh = buildLookSettings(p);      // Font + Background groups
     const keysRefresh = buildKeySettings(p);       // Shortcuts (keys.js)
     addGroups(SETTINGS.filter(s => LATE_GROUPS.includes(s.group)));

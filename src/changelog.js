@@ -5,6 +5,13 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.5', date: '2026-11-15', title: 'Looks and sharper art', items: [
+      'A new Look page in the settings: presets that set up everything in one click: a gradient background, where the bar goes and its layout, the glass and the font. Aurora, Sunset, Nebula, Candy and Ember. They hide the page banners, so the gradient shows everywhere. Their gradients can be edited in the gradient maker afterwards',
+      'Save your current look as your own preset, with the bar\'s place too (it is in the settings backup)',
+      'High-quality art (Look > Art, off by default): sharper art on the player page, in the queue and in lists',
+      'Experimental (Misc, off by default): with the bar on the left or right, the player page zooms out of the bar\'s art and back into it',
+      'Fixed: the up-next peek sometimes showed a song from earlier in the queue instead of the next one',
+    ] },
     { v: '1.9.4', date: '2026-11-14', title: 'Links for Discord, shortcuts and a command palette', items: [
       'Share in the 3-dot menus opens a small popup of links: YouTube (plays inline in Discord), YouTube Music, short, Koutube (a richer Discord preview, through a third-party service) and Markdown, plus More for YouTube Music\'s own share options. “Start at” makes the link start where you are in the song',
       'Shortcuts: Ctrl+K opens a command palette for every action and setting. Change any key in Settings > Shortcuts',
