@@ -76,6 +76,7 @@
   const beginClose = () => {
     closingUntil = performance.now() + 2500;
     if (lastOpen) animateClose();
+    circleClose();
     lastOpen = false;
     setBgHidden(false);
   };
@@ -89,6 +90,7 @@
     lastOpen = open;
 
     setBgHidden(open);
+    if (!firstRun) { if (open) circleOpen(); else circleClose(); }   // art-circle.js (Player page > Open effect)
 
     if (firstRun || reduceMotion.matches) return;
     if (!open) { animateClose(); return; }                  // closed by YTM itself (its own button, a key)

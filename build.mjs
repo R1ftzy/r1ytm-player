@@ -36,6 +36,7 @@ const SECTIONS = [
   'bar-position',    // bar at the bottom or the top (in YTM's header / under it)
   'zen',             // zen mode: locked, title-card listening screen
   'vinyl',           // player page art as a spinning record
+  'art-circle',      // player page open: bar bounce + blurred art growing in a circle behind the page
   'hqart',           // high-quality art (off by default)
   'changelog',       // "What's new" popup after an update
   'backup',          // export / import every setting as one file

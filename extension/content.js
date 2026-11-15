@@ -3,7 +3,7 @@
 // Injected on https://music.youtube.com/* only.
 (() => {
   'use strict';
-  const VERSION = '1.9.5';
+  const VERSION = '1.9.6';
 
   /* ---------- settings ---------- */
   const PLAYER_PAGE_BAR_SPACE = '88px';          // space the player page keeps free for the bar until it's measured (follows the bar size)
@@ -17,6 +17,13 @@
   const POP_CLOSE_MS = 360;                      // ...and goes back into it
   const MINI_ART_FADE_MS = 450;                  // mobile: fade-in of YTM's own mini art after the player page closes
   const MINI_ART_DELAY_MS = 400;                 // ...starting this long after the page reports closed
+  const CIRCLE_DELAY_MS = 300;                   // art circle: the bar bounces this long after the player page starts to open
+  const CIRCLE_BOUNCE_MS = 520;                  // ...the bounce away from the bar's edge and back
+  const CIRCLE_BOUNCE_PX = 16;                   // ...how far it goes
+  const CIRCLE_GROW_MS = 900;                    // ...the circle growing until it covers the page
+  const CIRCLE_BLUR = 90;                        // ...how blurred the art is (px)
+  const CIRCLE_FADE_MS = 800;                    // ...fade to the next song's art
+  const CIRCLE_SPIN_S = 40;                      // ...seconds per turn of the blurred art
   const VINYL_SPIN = [0, 40, 16, 1.8];           // vinyl: seconds per turn for the Spin choice (0 = still; 1.8 s = 33⅓ rpm)
 
   /* ---------- icons & helpers ---------- */
@@ -340,6 +347,7 @@
   const beginClose = () => {
     closingUntil = performance.now() + 2500;
     if (lastOpen) animateClose();
+    circleClose();
     lastOpen = false;
     setBgHidden(false);
   };
@@ -353,6 +361,7 @@
     lastOpen = open;
 
     setBgHidden(open);
+    if (!firstRun) { if (open) circleOpen(); else circleClose(); }   // art-circle.js (Player page > Open effect)
 
     if (firstRun || reduceMotion.matches) return;
     if (!open) { animateClose(); return; }                  // closed by YTM itself (its own button, a key)
@@ -1970,6 +1979,8 @@
     { key: 'setLayout', min: 0, max: 1, def: 1 },
     // hqart.js: shown on the Look page (themes.js)
     { key: 'hqArt', min: 0, max: 1, def: 0 },
+    // art-circle.js: the effect when the player page opens; shown on the Look page (themes.js), under Art
+    { key: 'artCircle', min: 0, max: 1, def: 0 },
     // share.js: the Koutube notice was answered with "Don't show this again"
     { key: 'koutubeOk', min: 0, max: 1, def: 0 },
   ];
@@ -5074,6 +5085,186 @@
     document.querySelectorAll('.am-vinyl-unclip').forEach(n => n.classList.remove('am-vinyl-unclip'));
     html.classList.remove('am-vinyl-on', 'am-vinyl-paused');
   };
+  /* ---------- art circle: the bar bounces, then a blurred, spinning copy of the art grows in a circle behind everything ---------- */
+  // Misc > Experimental (off by default). CIRCLE_DELAY_MS after the player page starts to open, the bar bounces away from
+  // its edge and back (bottom bar: up, left bar: right ...). As it springs back, a circle grows out of the bar's middle
+  // until it covers the whole window. Inside it: the album art, heavily blurred and darkened, turning slowly.
+  // The layer is fixed behind the whole app (like the custom background, .am-bg, and above it). While it shows, the
+  // fills that would hide it are see-through: the page, YTM's header and sidebar, and any other big dark fill
+  // (measured; put back when the page closes). On a new song the next art fades in over the old one.
+  const acBox = el('div', 'am-circle');
+  const acClip = el('div', 'am-circle-clip', acBox);      // the growing circle
+  const acSpin = el('div', 'am-circle-spin', acClip);
+  const acStyle = el('style', null, document.head);
+  acStyle.textContent = `
+    /* the base outside the circle: YTM's own dark, or the custom background (.am-bg, under this layer) when there is one */
+    .am-circle { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; display: none; background: #030303;
+      transition: opacity .3s ease; }
+    html.am-bg-on .am-circle { background: transparent; }
+    html.am-circle-show .am-circle { display: block; }
+    .am-circle-clip { position: absolute; inset: 0; overflow: hidden; }
+    .am-circle.am-circle-wait .am-circle-clip { clip-path: circle(0px at 50% 100%); }
+    .am-circle.am-circle-out { opacity: 0; }
+    /* a square bigger than the window's diagonal, so the turning art always covers it */
+    .am-circle-spin { position: absolute; left: 50%; top: 50%; width: 150vmax; height: 150vmax; margin: -75vmax 0 0 -75vmax;
+      will-change: transform; animation: am-circle-spin ${CIRCLE_SPIN_S}s linear infinite; }
+    @keyframes am-circle-spin { to { transform: rotate(360deg); } }
+    /* larger than the square: a blur fades out at its own edges */
+    .am-circle-art { position: absolute; inset: calc(-2 * ${CIRCLE_BLUR}px); background: center / cover no-repeat;
+      filter: blur(${CIRCLE_BLUR}px) saturate(1.4) brightness(.55); opacity: 0; transition: opacity ${CIRCLE_FADE_MS}ms ease; }
+    .am-circle-art.am-ready { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) { .am-circle-spin { animation: none; } }
+    /* see-through while it shows: the page, YTM's header and sidebar, and the app behind them */
+    html.am-circle-show, html.am-circle-show body,
+    html.am-circle-show :is(ytmusic-app, ytmusic-app-layout, #layout, ytmusic-player-page, #nav-bar-background,
+      #guide-wrapper, #guide-content, #guide-renderer, #mini-guide, #mini-guide-background, #mini-guide-renderer) {
+      background: transparent !important; }
+    html.am-circle-show #nav-bar-background { backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+      box-shadow: none !important; border: 0 !important; }
+  `;
+
+  let acSrc = '', acPending = '', acAnim = null, acTimer = 0, acHideTimer = 0;
+  let acShown = false;                      // the circle is open (or opening) for this opening of the page
+  const acCleared = new Map();              // element -> its inline background-color before (to put back)
+
+  // the next art: loaded first, then faded in over the old one, which goes once the fade is done
+  const acSetArt = src => {
+    acSrc = src;
+    acPending = src;
+    const im = new Image();
+    im.onload = () => {
+      if (acPending !== src) return;        // a newer song came meanwhile
+      const layer = el('div', 'am-circle-art', acSpin);
+      layer.style.backgroundImage = `url("${src.replace(/"/g, '%22')}")`;
+      requestAnimationFrame(() => requestAnimationFrame(() => layer.classList.add('am-ready')));
+      setTimeout(() => { for (const n of [...acSpin.children]) if (n !== layer && layer.isConnected) n.remove(); }, CIRCLE_FADE_MS + 100);
+    };
+    im.src = src;
+  };
+
+  const acSide = () => (isMobile() ? 'bottom' : posNow);
+
+  // the bar jumps away from its edge and comes back with a small overshoot (translate: the bar's transform is in use)
+  const bounceBar = () => {
+    if (reduceMotion.matches || ['am-hidden', 'am-autohid', 'am-idle'].some(c => bar.classList.contains(c))) return;
+    const side = acSide();
+    const [dx, dy] = side === 'bottom' ? [0, -1] : side === 'top' ? [0, 1] : side === 'left' ? [1, 0] : [-1, 0];
+    const at = k => `${(dx * k).toFixed(1)}px ${(dy * k).toFixed(1)}px`;
+    const B = CIRCLE_BOUNCE_PX;
+    bar.animate([
+      { translate: '0px 0px', easing: 'cubic-bezier(.2, .7, .3, 1)' },
+      { translate: at(B), offset: 0.3, easing: 'cubic-bezier(.5, 0, .7, .4)' },
+      { translate: at(-B * 0.22), offset: 0.62, easing: 'cubic-bezier(.3, .6, .4, 1)' },
+      { translate: at(B * 0.06), offset: 0.82 },
+      { translate: '0px 0px' },
+    ], { duration: CIRCLE_BOUNCE_MS });
+  };
+
+  // other dark fills that would cover the circle (YTM's layouts differ between accounts): measured on a grid that
+  // includes the header row and the sidebar column. Only big ones: a full-width strip or a full-height column.
+  const acSweep = () => {
+    for (const fx of [0.01, 0.04, 0.3, 0.6, 0.97]) for (const fy of [0.02, 0.05, 0.5, 0.92]) {
+      for (const n of document.elementsFromPoint(innerWidth * fx, innerHeight * fy)) {
+        if (n === html || n === document.body || acCleared.has(n)) continue;
+        if (n.closest('.am-bar, .am-menu, .am-set-back, .am-gm, .am-bg, .am-circle, .am-zen, ytmusic-player, .am-vinyl, ' +
+          'tp-yt-iron-dropdown, tp-yt-paper-dialog')) continue;
+        const r = n.getBoundingClientRect();
+        if (!(r.height >= innerHeight * 0.6 || r.width >= innerWidth * 0.6)) continue;
+        const cs = getComputedStyle(n);
+        if (cs.backgroundImage !== 'none' || !darkOpaque(cs.backgroundColor)) continue;
+        acCleared.set(n, n.style.getPropertyValue('background-color'));
+        n.style.setProperty('background-color', 'transparent', 'important');
+      }
+    }
+  };
+  const acUnsweep = () => {
+    for (const [n, v] of acCleared) { if (v) n.style.setProperty('background-color', v); else n.style.removeProperty('background-color'); }
+    acCleared.clear();
+  };
+
+  // the circle, from the middle of the bar (or the middle of the bar's edge when the bar isn't on screen) to the
+  // farthest corner of the window
+  const acGrow = () => {
+    const w = innerWidth, h = innerHeight;
+    const b = bar.getBoundingClientRect();
+    const side = acSide();
+    let cx, cy;
+    if (b.width && !bar.classList.contains('am-hidden')) { cx = b.left + b.width / 2; cy = b.top + b.height / 2; }
+    else { cx = side === 'left' ? 0 : side === 'right' ? w : w / 2; cy = side === 'top' ? 0 : side === 'bottom' ? h : h / 2; }
+    const R = Math.max(...[[0, 0], [w, 0], [0, h], [w, h]].map(([x, y]) => Math.hypot(x - cx, y - cy))) + 2;
+    const at = `at ${cx.toFixed(0)}px ${cy.toFixed(0)}px`;
+    acBox.classList.remove('am-circle-wait');
+    if (acAnim) acAnim.cancel();
+    const anim = acAnim = acClip.animate([{ clipPath: `circle(0px ${at})` }, { clipPath: `circle(${R.toFixed(0)}px ${at})` }],
+      { duration: CIRCLE_GROW_MS, easing: 'cubic-bezier(.45, 0, .2, 1)' });
+    const done = () => { if (acAnim === anim) acAnim = null; };
+    anim.finished.then(done, done);
+  };
+
+  // player-page.js calls these when the page opens / starts to close
+  const circleOpen = () => {
+    if (!settings.artCircle) return;
+    if (!acBox.isConnected) document.body.append(acBox);   // after the custom background layer: drawn over it
+    clearTimeout(acTimer);
+    clearTimeout(acHideTimer);
+    acTimer = acHideTimer = 0;
+    if (acAnim) { acAnim.cancel(); acAnim = null; }
+    acShown = true;
+    acBox.classList.remove('am-circle-out');
+    html.classList.add('am-circle-show');
+    acSweep();
+    if (reduceMotion.matches) { acBox.classList.remove('am-circle-wait'); return; }
+    acBox.classList.add('am-circle-wait');
+    acTimer = setTimeout(() => {
+      acTimer = 0;
+      bounceBar();
+      // out of the bar as it springs back
+      acTimer = setTimeout(() => { acTimer = 0; acGrow(); }, CIRCLE_BOUNCE_MS * 0.3);
+    }, CIRCLE_DELAY_MS);
+  };
+  // fades out while the page closes, then the header, sidebar and page get their own fills back
+  const circleClose = () => {
+    clearTimeout(acTimer);
+    acTimer = 0;
+    if (!acShown) return;
+    acShown = false;
+    acBox.classList.add('am-circle-out');
+    clearTimeout(acHideTimer);
+    acHideTimer = setTimeout(() => {
+      acHideTimer = 0;
+      if (acShown) return;
+      if (acAnim) { acAnim.cancel(); acAnim = null; }
+      html.classList.remove('am-circle-show');
+      acUnsweep();
+    }, 320);
+  };
+
+  // sync loop: keep the art ready, and turn on / off with the setting
+  const syncCircle = src => {
+    if (!settings.artCircle) {
+      if (acShown || html.classList.contains('am-circle-show')) {
+        circleClose();
+        clearTimeout(acHideTimer);
+        acHideTimer = 0;
+        html.classList.remove('am-circle-show');
+        acUnsweep();
+      }
+      return;
+    }
+    if (src && src !== acSrc) acSetArt(src);
+    if (lastOpen !== true) return;
+    if (!acShown) { circleOpen(); return; }                 // turned on while the page is open
+    if (tick % 8 === 0 && performance.now() > animatingUntil) acSweep();
+  };
+  const circleOff = () => {
+    circleClose();
+    clearTimeout(acHideTimer);
+    if (acAnim) acAnim.cancel();
+    acBox.remove();
+    acStyle.remove();
+    acUnsweep();
+    html.classList.remove('am-circle-show');
+  };
   /* ---------- high-quality art (Bar & menus > Art, off by default) ---------- */
   // YTM asks Google's image server for small pictures. Two kinds of address:
   // - lh3.googleusercontent.com / yt3.ggpht.com (song and album art): the size is in the address (=w60-h60..., =s120):
@@ -5149,6 +5340,9 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.6', date: '2026-11-15', title: 'Art circle', items: [
+      'Art circle (Look > Art, off by default): when the player page opens, the bar bounces away from its edge, and a heavily blurred copy of the album art grows out of it in a circle until it covers the whole window, the header and sidebar too. The art turns slowly; on a new song the next art fades in',
+    ] },
     { v: '1.9.5', date: '2026-11-15', title: 'Looks and sharper art', items: [
       'A new Look page in the settings: presets that set up everything in one click: a gradient background, where the bar goes and its layout, the glass and the font. Aurora, Sunset, Nebula, Candy and Ember. They hide the page banners, so the gradient shows everywhere. Their gradients can be edited in the gradient maker afterwards',
       'Save your current look as your own preset, with the bar\'s place too (it is in the settings backup)',
@@ -6642,6 +6836,10 @@
     const an = el('div', 'am-set-note', aCard);
     an.textContent = 'Sharper art on the player page, in the queue and in lists. Uses more data';
     an.style.margin = '-4px 0 10px';
+    ui.toggle(aCard, 'Art circle', () => settings.artCircle, v => { settings.artCircle = v; saveSettings(); });
+    const cn = el('div', 'am-set-note', aCard);
+    cn.textContent = 'Player page: the bar bounces, then the blurred art grows out of it in a circle, spins slowly and colors the whole window';
+    cn.style.margin = '-4px 0 10px';
   };
 
   const themeStyle = el('style', null, document.head);
@@ -6719,6 +6917,7 @@
       const src = m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : '';
       if (src && art.src !== src) art.src = src;
     }
+    syncCircle(idle ? '' : (m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : ''));
     { const v = video(); syncVinyl(idle ? '' : (m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : ''), !v || v.paused); }
 
     // mobile: YTM's own mini art is hidden while the player page is open, and fades back in after it closed
@@ -6827,6 +7026,7 @@
     if (gmEl) gmEl.remove();
     zenOff();
     vinylOff();
+    circleOff();
     changelogOff();
     bgLayer.remove();
     restoreCleared();

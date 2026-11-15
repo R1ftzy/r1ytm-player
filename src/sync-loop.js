@@ -40,6 +40,7 @@
       const src = m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : '';
       if (src && art.src !== src) art.src = src;
     }
+    syncCircle(idle ? '' : (m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : ''));
     { const v = video(); syncVinyl(idle ? '' : (m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : ''), !v || v.paused); }
 
     // mobile: YTM's own mini art is hidden while the player page is open, and fades back in after it closed
@@ -148,6 +149,7 @@
     if (gmEl) gmEl.remove();
     zenOff();
     vinylOff();
+    circleOff();
     changelogOff();
     bgLayer.remove();
     restoreCleared();

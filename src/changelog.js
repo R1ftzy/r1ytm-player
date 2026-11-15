@@ -5,6 +5,9 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.6', date: '2026-11-15', title: 'Art circle', items: [
+      'Art circle (Look > Art, off by default): when the player page opens, the bar bounces away from its edge, and a heavily blurred copy of the album art grows out of it in a circle until it covers the whole window, the header and sidebar too. The art turns slowly; on a new song the next art fades in',
+    ] },
     { v: '1.9.5', date: '2026-11-15', title: 'Looks and sharper art', items: [
       'A new Look page in the settings: presets that set up everything in one click: a gradient background, where the bar goes and its layout, the glass and the font. Aurora, Sunset, Nebula, Candy and Ember. They hide the page banners, so the gradient shows everywhere. Their gradients can be edited in the gradient maker afterwards',
       'Save your current look as your own preset, with the bar\'s place too (it is in the settings backup)',

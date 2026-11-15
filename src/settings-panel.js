@@ -113,6 +113,8 @@
     { key: 'setLayout', min: 0, max: 1, def: 1 },
     // hqart.js: shown on the Look page (themes.js)
     { key: 'hqArt', min: 0, max: 1, def: 0 },
+    // art-circle.js: the effect when the player page opens; shown on the Look page (themes.js), under Art
+    { key: 'artCircle', min: 0, max: 1, def: 0 },
     // share.js: the Koutube notice was answered with "Don't show this again"
     { key: 'koutubeOk', min: 0, max: 1, def: 0 },
   ];

@@ -10,5 +10,12 @@
   const POP_CLOSE_MS = 360;                      // ...and goes back into it
   const MINI_ART_FADE_MS = 450;                  // mobile: fade-in of YTM's own mini art after the player page closes
   const MINI_ART_DELAY_MS = 400;                 // ...starting this long after the page reports closed
+  const CIRCLE_DELAY_MS = 300;                   // art circle: the bar bounces this long after the player page starts to open
+  const CIRCLE_BOUNCE_MS = 520;                  // ...the bounce away from the bar's edge and back
+  const CIRCLE_BOUNCE_PX = 16;                   // ...how far it goes
+  const CIRCLE_GROW_MS = 900;                    // ...the circle growing until it covers the page
+  const CIRCLE_BLUR = 90;                        // ...how blurred the art is (px)
+  const CIRCLE_FADE_MS = 800;                    // ...fade to the next song's art
+  const CIRCLE_SPIN_S = 40;                      // ...seconds per turn of the blurred art
   const VINYL_SPIN = [0, 40, 16, 1.8];           // vinyl: seconds per turn for the Spin choice (0 = still; 1.8 s = 33⅓ rpm)
 

@@ -182,6 +182,10 @@
     const an = el('div', 'am-set-note', aCard);
     an.textContent = 'Sharper art on the player page, in the queue and in lists. Uses more data';
     an.style.margin = '-4px 0 10px';
+    ui.toggle(aCard, 'Art circle', () => settings.artCircle, v => { settings.artCircle = v; saveSettings(); });
+    const cn = el('div', 'am-set-note', aCard);
+    cn.textContent = 'Player page: the bar bounces, then the blurred art grows out of it in a circle, spins slowly and colors the whole window';
+    cn.style.margin = '-4px 0 10px';
   };
 
   const themeStyle = el('style', null, document.head);
