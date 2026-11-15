@@ -106,12 +106,63 @@
 
   // tiles = quick actions on top; groups are separated by a line; the last group is shown quieter.
   // `re` items run YTM's own menu item with a matching label (and take over its wording, e.g. "Remove from library").
-  // the speed row: − value + inside the row; the menu stays open. A click on the value goes back to 1×; a click
-  // elsewhere on the row (or Enter) steps up and wraps around after 2×
-  const SPEED_STEPS = [50, 75, 100, 125, 150, 175, 200];
+  // the speed row: − value + inside the row; the menu stays open. − / + step by 0.05×; a click on the value goes back
+  // to 1×; a click elsewhere on the row (or Enter) steps up and wraps around after 2×. Pointing at the row (or the
+  // keyboard highlight) folds out a line under it, inside the row: a slider and a Keep pitch switch.
+  // The slider goes from 0.5× to 2× in 0.01× steps and snaps to 1× near it. It is not an <input>: the menu keeps
+  // pointer presses from the page (ytm-menus.js), which would stop a native slider from dragging, so it handles its own.
+  const SPEED_MIN = 50, SPEED_MAX = 200, SPEED_STEP = 5, SPEED_SNAP = 3;
+  const speedStepFrom = (s, d) => Math.max(SPEED_MIN, Math.min(SPEED_MAX,
+    d > 0 ? Math.floor(s / SPEED_STEP) * SPEED_STEP + SPEED_STEP : Math.ceil(s / SPEED_STEP) * SPEED_STEP - SPEED_STEP));
+  const speedSlider = (parent, onMove, hold) => {
+    const sl = el('div', 'am-menu-slide', parent);
+    const fillEl = el('div', 'am-menu-slide-fill', sl);
+    el('div', 'am-menu-slide-one', sl).style.left = ((100 - SPEED_MIN) / (SPEED_MAX - SPEED_MIN) * 100) + '%';
+    const knob = el('div', 'am-menu-slide-knob', sl);
+    const show = () => {
+      const p = (settings.speed - SPEED_MIN) / (SPEED_MAX - SPEED_MIN) * 100;
+      fillEl.style.width = p + '%';
+      knob.style.left = p + '%';
+    };
+    const at = e => {
+      const r = sl.getBoundingClientRect();
+      let v = Math.round(SPEED_MIN + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (SPEED_MAX - SPEED_MIN));
+      if (Math.abs(v - 100) <= SPEED_SNAP) v = 100;
+      return v;
+    };
+    let dragging = false;
+    sl.addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation();
+      dragging = true;
+      sl.setPointerCapture(e.pointerId);
+      sl.classList.add('am-drag');
+      hold(true);                            // stays folded out while dragging, even when the pointer leaves the row
+      onMove(at(e), false);
+    });
+    sl.addEventListener('pointermove', e => { if (dragging) { e.stopPropagation(); onMove(at(e), false); } });
+    const end = e => {
+      if (!dragging) return;
+      dragging = false;
+      sl.classList.remove('am-drag');
+      hold(false);
+      e.stopPropagation();
+      onMove(settings.speed, true);
+    };
+    sl.addEventListener('pointerup', end);
+    sl.addEventListener('pointercancel', end);
+    for (const t of ['click', 'mousedown', 'mouseup', 'touchstart', 'touchend']) sl.addEventListener(t, e => e.stopPropagation());
+    // wheel on the slider: 0.01× a notch
+    sl.addEventListener('wheel', e => {
+      e.preventDefault(); e.stopPropagation();
+      onMove(Math.max(SPEED_MIN, Math.min(SPEED_MAX, settings.speed + (e.deltaY < 0 ? 1 : -1))), true);
+    }, { passive: false });
+    show();
+    return show;
+  };
   const speedItem = () => {
     const it = { icon: 'speed', label: 'Speed', keep: true };
     it.extra = b => {
+      b.classList.add('am-menu-speedrow');
       const box = el('span', 'am-menu-speed', b);
       const minus = el('span', 'am-menu-sbtn', box);
       minus.textContent = '−'; minus.dataset.d = '-1'; minus.title = 'Slower';
@@ -119,16 +170,39 @@
       val.dataset.d = '0'; val.title = 'Normal speed';
       const plus = el('span', 'am-menu-sbtn', box);
       plus.textContent = '+'; plus.dataset.d = '1'; plus.title = 'Faster';
-      it.show = () => { val.textContent = fmtSpeed(settings.speed / 100); b.classList.toggle('am-on', settings.speed !== 100); };
+      // the fold-out line: slider + Keep pitch
+      const more = el('div', 'am-menu-speedx', b);
+      let showSlide = null;
+      const pitch = el('span', 'am-menu-pitch', more);
+      pitch.textContent = 'Keep pitch';
+      pitch.title = 'Off: the pitch goes up and down with the speed (nightcore / slowed)';
+      it.show = () => {
+        val.textContent = fmtSpeed(settings.speed / 100);
+        b.classList.toggle('am-on', settings.speed !== 100);
+        pitch.classList.toggle('am-on', !!settings.keepPitch);
+        if (showSlide) showSlide();
+      };
+      // while dragging: the speed follows at once; saved when let go
+      showSlide = speedSlider(more, (v, save) => { setSpeed(v, !save); it.show(); }, on => more.classList.toggle('am-hold', on));
+      more.prepend(more.lastChild);          // the slider first, the switch at the end
       it.show();
     };
     it.run = e => {
-      const t = e && e.target && e.target.closest ? e.target.closest('[data-d]') : null;
+      const tg = e && e.target && e.target.closest ? e.target : null;
+      if (tg && tg.closest('.am-menu-pitch')) {
+        settings.keepPitch = settings.keepPitch ? 0 : 1;
+        saveSettings();
+        syncSpeed();
+        it.show();
+        return;
+      }
+      if (tg && tg.closest('.am-menu-speedx')) return;   // the gap around the slider: nothing
+      const t = tg ? tg.closest('[data-d]') : null;
       const d = t ? +t.dataset.d : 1, s = settings.speed;
       let n;
       if (d === 0) n = 100;
-      else if (d > 0) { n = SPEED_STEPS.find(x => x > s); if (n === undefined) n = t ? 200 : SPEED_STEPS[0]; }
-      else { n = [...SPEED_STEPS].reverse().find(x => x < s); if (n === undefined) n = SPEED_STEPS[0]; }
+      else if (d > 0) n = !t && s >= SPEED_MAX ? SPEED_MIN : speedStepFrom(s, 1);
+      else n = speedStepFrom(s, -1);
       setSpeed(n);
       if (it.show) it.show();
     };

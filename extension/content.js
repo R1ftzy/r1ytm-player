@@ -3,7 +3,7 @@
 // Injected on https://music.youtube.com/* only.
 (() => {
   'use strict';
-  const VERSION = '1.9.6';
+  const VERSION = '1.9.7';
 
   /* ---------- settings ---------- */
   const PLAYER_PAGE_BAR_SPACE = '88px';          // space the player page keeps free for the bar until it's measured (follows the bar size)
@@ -595,12 +595,63 @@
 
   // tiles = quick actions on top; groups are separated by a line; the last group is shown quieter.
   // `re` items run YTM's own menu item with a matching label (and take over its wording, e.g. "Remove from library").
-  // the speed row: − value + inside the row; the menu stays open. A click on the value goes back to 1×; a click
-  // elsewhere on the row (or Enter) steps up and wraps around after 2×
-  const SPEED_STEPS = [50, 75, 100, 125, 150, 175, 200];
+  // the speed row: − value + inside the row; the menu stays open. − / + step by 0.05×; a click on the value goes back
+  // to 1×; a click elsewhere on the row (or Enter) steps up and wraps around after 2×. Pointing at the row (or the
+  // keyboard highlight) folds out a line under it, inside the row: a slider and a Keep pitch switch.
+  // The slider goes from 0.5× to 2× in 0.01× steps and snaps to 1× near it. It is not an <input>: the menu keeps
+  // pointer presses from the page (ytm-menus.js), which would stop a native slider from dragging, so it handles its own.
+  const SPEED_MIN = 50, SPEED_MAX = 200, SPEED_STEP = 5, SPEED_SNAP = 3;
+  const speedStepFrom = (s, d) => Math.max(SPEED_MIN, Math.min(SPEED_MAX,
+    d > 0 ? Math.floor(s / SPEED_STEP) * SPEED_STEP + SPEED_STEP : Math.ceil(s / SPEED_STEP) * SPEED_STEP - SPEED_STEP));
+  const speedSlider = (parent, onMove, hold) => {
+    const sl = el('div', 'am-menu-slide', parent);
+    const fillEl = el('div', 'am-menu-slide-fill', sl);
+    el('div', 'am-menu-slide-one', sl).style.left = ((100 - SPEED_MIN) / (SPEED_MAX - SPEED_MIN) * 100) + '%';
+    const knob = el('div', 'am-menu-slide-knob', sl);
+    const show = () => {
+      const p = (settings.speed - SPEED_MIN) / (SPEED_MAX - SPEED_MIN) * 100;
+      fillEl.style.width = p + '%';
+      knob.style.left = p + '%';
+    };
+    const at = e => {
+      const r = sl.getBoundingClientRect();
+      let v = Math.round(SPEED_MIN + Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * (SPEED_MAX - SPEED_MIN));
+      if (Math.abs(v - 100) <= SPEED_SNAP) v = 100;
+      return v;
+    };
+    let dragging = false;
+    sl.addEventListener('pointerdown', e => {
+      e.preventDefault(); e.stopPropagation();
+      dragging = true;
+      sl.setPointerCapture(e.pointerId);
+      sl.classList.add('am-drag');
+      hold(true);                            // stays folded out while dragging, even when the pointer leaves the row
+      onMove(at(e), false);
+    });
+    sl.addEventListener('pointermove', e => { if (dragging) { e.stopPropagation(); onMove(at(e), false); } });
+    const end = e => {
+      if (!dragging) return;
+      dragging = false;
+      sl.classList.remove('am-drag');
+      hold(false);
+      e.stopPropagation();
+      onMove(settings.speed, true);
+    };
+    sl.addEventListener('pointerup', end);
+    sl.addEventListener('pointercancel', end);
+    for (const t of ['click', 'mousedown', 'mouseup', 'touchstart', 'touchend']) sl.addEventListener(t, e => e.stopPropagation());
+    // wheel on the slider: 0.01× a notch
+    sl.addEventListener('wheel', e => {
+      e.preventDefault(); e.stopPropagation();
+      onMove(Math.max(SPEED_MIN, Math.min(SPEED_MAX, settings.speed + (e.deltaY < 0 ? 1 : -1))), true);
+    }, { passive: false });
+    show();
+    return show;
+  };
   const speedItem = () => {
     const it = { icon: 'speed', label: 'Speed', keep: true };
     it.extra = b => {
+      b.classList.add('am-menu-speedrow');
       const box = el('span', 'am-menu-speed', b);
       const minus = el('span', 'am-menu-sbtn', box);
       minus.textContent = '−'; minus.dataset.d = '-1'; minus.title = 'Slower';
@@ -608,16 +659,39 @@
       val.dataset.d = '0'; val.title = 'Normal speed';
       const plus = el('span', 'am-menu-sbtn', box);
       plus.textContent = '+'; plus.dataset.d = '1'; plus.title = 'Faster';
-      it.show = () => { val.textContent = fmtSpeed(settings.speed / 100); b.classList.toggle('am-on', settings.speed !== 100); };
+      // the fold-out line: slider + Keep pitch
+      const more = el('div', 'am-menu-speedx', b);
+      let showSlide = null;
+      const pitch = el('span', 'am-menu-pitch', more);
+      pitch.textContent = 'Keep pitch';
+      pitch.title = 'Off: the pitch goes up and down with the speed (nightcore / slowed)';
+      it.show = () => {
+        val.textContent = fmtSpeed(settings.speed / 100);
+        b.classList.toggle('am-on', settings.speed !== 100);
+        pitch.classList.toggle('am-on', !!settings.keepPitch);
+        if (showSlide) showSlide();
+      };
+      // while dragging: the speed follows at once; saved when let go
+      showSlide = speedSlider(more, (v, save) => { setSpeed(v, !save); it.show(); }, on => more.classList.toggle('am-hold', on));
+      more.prepend(more.lastChild);          // the slider first, the switch at the end
       it.show();
     };
     it.run = e => {
-      const t = e && e.target && e.target.closest ? e.target.closest('[data-d]') : null;
+      const tg = e && e.target && e.target.closest ? e.target : null;
+      if (tg && tg.closest('.am-menu-pitch')) {
+        settings.keepPitch = settings.keepPitch ? 0 : 1;
+        saveSettings();
+        syncSpeed();
+        it.show();
+        return;
+      }
+      if (tg && tg.closest('.am-menu-speedx')) return;   // the gap around the slider: nothing
+      const t = tg ? tg.closest('[data-d]') : null;
       const d = t ? +t.dataset.d : 1, s = settings.speed;
       let n;
       if (d === 0) n = 100;
-      else if (d > 0) { n = SPEED_STEPS.find(x => x > s); if (n === undefined) n = t ? 200 : SPEED_STEPS[0]; }
-      else { n = [...SPEED_STEPS].reverse().find(x => x < s); if (n === undefined) n = SPEED_STEPS[0]; }
+      else if (d > 0) n = !t && s >= SPEED_MAX ? SPEED_MIN : speedStepFrom(s, 1);
+      else n = speedStepFrom(s, -1);
       setSpeed(n);
       if (it.show) it.show();
     };
@@ -910,6 +984,7 @@
     addEventListener(type, e => {
       if (!menuEl) return;
       if (menuEl.contains(e.target)) {
+        if (e.target.closest('.am-menu-slide')) return;   // the speed slider (more-menu.js) handles its own and stops them
         e.stopPropagation();
         if (type === 'pointerdown' || type === 'mousedown') e.preventDefault();
         if (type === 'click') {
@@ -1148,6 +1223,29 @@
     .am-menu-sval { min-width: calc(44px * var(--am-ms)); color: rgb(255 255 255 / .7); }
     .am-menu-item.am-on .am-menu-sval { color: #fa586a; font-weight: 600; }
     .am-menu-sbtn:hover, .am-menu-sval:hover { background: rgb(255 255 255 / .14); color: #fff; }
+    /* the speed row folds out a line under the label while pointed at: a slider and a Keep pitch switch, lined up with the label */
+    .am-menu-row.am-menu-speedrow { flex-wrap: wrap; height: auto; min-height: calc(36px * var(--am-ms)); align-content: center;
+      padding-top: 5px; padding-bottom: 5px; row-gap: 0; }
+    .am-menu-speedx { --am-ind: calc(20px * var(--am-ms) + 12px); box-sizing: border-box; flex: 0 0 auto; width: calc(100% - var(--am-ind));
+      margin-left: var(--am-ind); display: flex; align-items: center; gap: 10px; max-height: 0; opacity: 0; overflow: hidden;
+      transition: max-height .22s cubic-bezier(.2, .8, .2, 1), opacity .16s ease, padding .22s cubic-bezier(.2, .8, .2, 1); }
+    .am-menu-speedrow:hover .am-menu-speedx, .am-menu-speedrow.am-kb .am-menu-speedx, .am-menu-speedx.am-hold {
+      max-height: 40px; opacity: 1; padding: 4px 0 3px; }
+    @media (hover: none) { .am-menu-speedx { max-height: 40px; opacity: 1; padding: 4px 0 3px; } }
+    .am-menu-slide { position: relative; flex: 1 1 auto; min-width: 0; height: 18px; cursor: pointer; touch-action: none; }
+    .am-menu-slide::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 4px; translate: 0 -50%;
+      border-radius: 2px; background: rgb(255 255 255 / .18); }
+    .am-menu-slide-fill { position: absolute; left: 0; top: 50%; height: 4px; translate: 0 -50%; border-radius: 2px; background: rgb(255 255 255 / .85); }
+    .am-menu-item.am-on .am-menu-slide-fill { background: #fa586a; }
+    .am-menu-slide-one { position: absolute; top: 50%; width: 2px; height: 10px; translate: -50% -50%; border-radius: 1px; background: rgb(255 255 255 / .45); }
+    .am-menu-slide-knob { position: absolute; top: 50%; width: 12px; height: 12px; translate: -50% -50%; border-radius: 50%;
+      background: #fff; box-shadow: 0 1px 4px rgb(0 0 0 / .45); transition: scale .12s ease; }
+    .am-menu-slide:hover .am-menu-slide-knob, .am-menu-slide.am-drag .am-menu-slide-knob { scale: 1.25; }
+    .am-menu-pitch { flex-shrink: 0; padding: 3px 9px; border-radius: 999px; font-size: calc(11.5px * var(--am-ms));
+      color: rgb(255 255 255 / .6); background: rgb(255 255 255 / .08); box-shadow: inset 0 0 0 1px rgb(255 255 255 / .12);
+      transition: background .12s ease, color .12s ease; }
+    .am-menu-pitch:hover { background: rgb(255 255 255 / .16); color: #fff; }
+    .am-menu-pitch.am-on { color: #fff; background: rgb(250 88 106 / .3); box-shadow: inset 0 0 0 1px rgb(250 88 106 / .6); }
     /* the 3-dot button shows the speed while it is not 1× */
     .am-lcd-more[data-speed] { position: relative; overflow: visible; }
     .am-lcd-more[data-speed]::after { content: attr(data-speed); position: absolute; right: -2px; top: -3px; padding: 1px 4px;
@@ -1905,7 +2003,7 @@
     { group: 'Bar & menus', sub: 'Behavior', key: 'autoHideSong', type: 'toggle', label: 'Show on a new song', min: 0, max: 1, def: 1,
       dep: 'autoHide', note: () => 'For a few seconds' },
     // playback speed (syncSpeed below). Kept in % so the steps stay whole numbers; shown as 1.25×
-    { group: 'Playback', sub: 'Speed', key: 'speed', label: 'Speed', min: 50, max: 200, step: 5, def: 100, unit: '%',
+    { group: 'Playback', sub: 'Speed', key: 'speed', label: 'Speed', min: 50, max: 200, step: 1, def: 100, unit: '%',
       fmt: v => fmtSpeed(v / 100) },
     { group: 'Playback', sub: 'Speed', key: 'keepPitch', type: 'toggle', label: 'Keep pitch', min: 0, max: 1, def: 1,
       note: () => 'Off: the pitch goes up and down with the speed (nightcore / slowed)' },
@@ -2110,9 +2208,10 @@
       moreBtn.title = badge ? 'More (speed ' + badge + ')' : '';
     }
   };
-  const setSpeed = pct => {
-    settings.speed = Math.max(50, Math.min(200, Math.round(pct / 5) * 5));
-    saveSettings();
+  // pct on a 1% grid (0.01×). live: while a slider is dragged, set it now and save once it is let go
+  const setSpeed = (pct, live) => {
+    settings.speed = Math.max(50, Math.min(200, Math.round(pct)));
+    if (!live) saveSettings();
     syncSpeed();
   };
   /* speed: the values go in one small style sheet, each only on the elements that use it (s.scope), not on <html>.
@@ -5340,6 +5439,10 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.7', date: '2026-11-16', title: 'Finer speed and more shortcuts', items: [
+      'Speed: point at Speed in the 3-dot menu and it folds out a slider, from 0.5× to 2× in 0.01× steps (it snaps to 1×), and a Keep pitch switch. − and + now step by 0.05×, and so do the speed shortcuts',
+      'New shortcuts (Settings > Shortcuts, and in the Ctrl+K palette): Art circle (Alt+Shift+A), Vinyl (Alt+Shift+V), next bar layout (Alt+Shift+L), and, with no key until you set one: shuffle, repeat, floating bar, auto-hide, up-next peek, refraction, high-quality art, player page pop, keep pitch and What\'s new',
+    ] },
     { v: '1.9.6', date: '2026-11-15', title: 'Art circle', items: [
       'Art circle (Look > Art, off by default): when the player page opens, the bar bounces away from its edge, and a heavily blurred copy of the album art grows out of it in a circle until it covers the whole window, the header and sidebar too. The art turns slowly; on a new song the next art fades in',
     ] },
@@ -6411,9 +6514,7 @@
     toast('Volume ' + val + '%');
   };
   const speedStep = d => {
-    const s = settings.speed;
-    let n = d > 0 ? SPEED_STEPS.find(x => x > s) : [...SPEED_STEPS].reverse().find(x => x < s);
-    if (n === undefined) n = d > 0 ? SPEED_STEPS[SPEED_STEPS.length - 1] : SPEED_STEPS[0];
+    const n = speedStepFrom(settings.speed, d);
     setSpeed(n);
     toast('Speed ' + fmtSpeed(n / 100));
   };
@@ -6421,6 +6522,19 @@
   const setBarPos = v => {
     settings.barPos = v; applySettings(); saveSettings(); placeBar(); hideBase();
     toast('Bar: ' + POS_NAMES[v]);
+  };
+  // turn a setting on / off (flip: its key). These are not listed again as settings in the command palette
+  const flipSetting = (key, name, after) => () => {
+    const s = SETTINGS.find(x => x.key === key);
+    const v = settings[key] ? 0 : 1;
+    applySetting(s, v);
+    if (after) after();
+    toast(name + ': ' + (v ? 'on' : 'off'));
+  };
+  const cycleLayout = () => {
+    const m = nextLayout();
+    applyMode(m); placeBar(); hideBase();
+    toast('Bar layout: ' + m[0].toUpperCase() + m.slice(1));
   };
   // id, label, default key, run. The order is the order on the Shortcuts page
   const ACTIONS = [
@@ -6439,10 +6553,23 @@
     { id: 'lyrics', label: 'Lyrics', def: '', run: () => showTab(...LYRICS) },
     { id: 'queue', label: 'Up next (queue)', def: '', run: () => showTab(...UPNEXT) },
     { id: 'zen', label: 'Zen mode', def: 'Alt+Shift+KeyZ', run: () => openZen() },
+    { id: 'shuffle', label: 'Shuffle on / off', def: '', run: clickYt('Shuffle') },
+    { id: 'repeat', label: 'Repeat: off / all / one', def: '', run: clickYt('Repeat') },
     { id: 'barPos', label: 'Next bar position', def: 'Alt+Shift+KeyB', run: () => setBarPos((settings.barPos + 1) % 4) },
+    { id: 'barLayout', label: 'Next bar layout', def: 'Alt+Shift+KeyL', run: cycleLayout },
+    { id: 'barFloat', label: 'Floating bar on / off', def: '', flip: 'barFloat', run: flipSetting('barFloat', 'Floating bar') },
+    { id: 'autoHide', label: 'Auto-hide on / off', def: '', flip: 'autoHide', run: flipSetting('autoHide', 'Auto-hide') },
+    { id: 'peek', label: 'Up-next peek on / off', def: '', flip: 'peek', run: flipSetting('peek', 'Up-next peek') },
+    { id: 'refract', label: 'Refraction on / off', def: '', flip: 'refract', run: () => canRefract ? flipSetting('refract', 'Refraction')() : toast('Refraction needs Chrome, Edge or Brave') },
+    { id: 'artCircle', label: 'Art circle on / off', def: 'Alt+Shift+KeyA', flip: 'artCircle', run: flipSetting('artCircle', 'Art circle') },
+    { id: 'hqArt', label: 'High-quality art on / off', def: '', flip: 'hqArt', run: flipSetting('hqArt', 'High-quality art', () => syncHqArt()) },
+    { id: 'vinyl', label: 'Vinyl on / off', def: 'Alt+Shift+KeyV', flip: 'vinyl', run: flipSetting('vinyl', 'Vinyl') },
+    { id: 'popPage', label: 'Player page pop on / off', def: '', flip: 'popPage', run: flipSetting('popPage', 'Player page pop') },
+    { id: 'keepPitch', label: 'Keep pitch on / off', def: '', flip: 'keepPitch', run: flipSetting('keepPitch', 'Keep pitch', () => syncSpeed()) },
     { id: 'showBar', label: 'Show the bar (auto-hide)', def: 'Alt+Shift+KeyH', run: () => revealBar(3000) },
     { id: 'copyLink', label: 'Copy link to this song', def: 'Alt+Shift+KeyC', run: () => copyNowLink() },
     { id: 'settings', label: 'Open the settings', def: 'Alt+Shift+KeyS', run: () => openSettings() },
+    { id: 'whatsNew', label: "What's new", def: '', run: () => openChangelog('all') },
   ];
   const keys = (() => { try { return JSON.parse(store.get('am-keys', '{}')) || {}; } catch { return {}; } })();
   const keyOf = a => typeof keys[a.id] === 'string' ? keys[a.id] : a.def;
@@ -6533,7 +6660,7 @@
   const paletteCommands = () => {
     const out = ACTIONS.filter(a => a.id !== 'palette').map(a => ({ label: a.label, hint: showCombo(keyOf(a)) === 'None' ? '' : showCombo(keyOf(a)), run: a.run }));
     for (const s of SETTINGS) {
-      if (!s.group || (s.disabled && s.disabled())) continue;
+      if (!s.group || (s.disabled && s.disabled()) || ACTIONS.some(a => a.flip === s.key)) continue;
       const where = s.group + (s.sub ? ' › ' + s.sub : '');
       if (s.type === 'choice') for (const [t, v] of s.options) {
         out.push({ label: s.label + ': ' + t, hint: where, on: settings[s.key] === v, run: () => { applySetting(s, v); toast(s.label + ': ' + t); } });

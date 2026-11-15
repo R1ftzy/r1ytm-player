@@ -5,6 +5,10 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.7', date: '2026-11-16', title: 'Finer speed and more shortcuts', items: [
+      'Speed: point at Speed in the 3-dot menu and it folds out a slider, from 0.5× to 2× in 0.01× steps (it snaps to 1×), and a Keep pitch switch. − and + now step by 0.05×, and so do the speed shortcuts',
+      'New shortcuts (Settings > Shortcuts, and in the Ctrl+K palette): Art circle (Alt+Shift+A), Vinyl (Alt+Shift+V), next bar layout (Alt+Shift+L), and, with no key until you set one: shuffle, repeat, floating bar, auto-hide, up-next peek, refraction, high-quality art, player page pop, keep pitch and What\'s new',
+    ] },
     { v: '1.9.6', date: '2026-11-15', title: 'Art circle', items: [
       'Art circle (Look > Art, off by default): when the player page opens, the bar bounces away from its edge, and a heavily blurred copy of the album art grows out of it in a circle until it covers the whole window, the header and sidebar too. The art turns slowly; on a new song the next art fades in',
     ] },

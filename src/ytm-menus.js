@@ -120,6 +120,7 @@
     addEventListener(type, e => {
       if (!menuEl) return;
       if (menuEl.contains(e.target)) {
+        if (e.target.closest('.am-menu-slide')) return;   // the speed slider (more-menu.js) handles its own and stops them
         e.stopPropagation();
         if (type === 'pointerdown' || type === 'mousedown') e.preventDefault();
         if (type === 'click') {

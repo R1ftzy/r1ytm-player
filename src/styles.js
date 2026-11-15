@@ -144,6 +144,29 @@
     .am-menu-sval { min-width: calc(44px * var(--am-ms)); color: rgb(255 255 255 / .7); }
     .am-menu-item.am-on .am-menu-sval { color: #fa586a; font-weight: 600; }
     .am-menu-sbtn:hover, .am-menu-sval:hover { background: rgb(255 255 255 / .14); color: #fff; }
+    /* the speed row folds out a line under the label while pointed at: a slider and a Keep pitch switch, lined up with the label */
+    .am-menu-row.am-menu-speedrow { flex-wrap: wrap; height: auto; min-height: calc(36px * var(--am-ms)); align-content: center;
+      padding-top: 5px; padding-bottom: 5px; row-gap: 0; }
+    .am-menu-speedx { --am-ind: calc(20px * var(--am-ms) + 12px); box-sizing: border-box; flex: 0 0 auto; width: calc(100% - var(--am-ind));
+      margin-left: var(--am-ind); display: flex; align-items: center; gap: 10px; max-height: 0; opacity: 0; overflow: hidden;
+      transition: max-height .22s cubic-bezier(.2, .8, .2, 1), opacity .16s ease, padding .22s cubic-bezier(.2, .8, .2, 1); }
+    .am-menu-speedrow:hover .am-menu-speedx, .am-menu-speedrow.am-kb .am-menu-speedx, .am-menu-speedx.am-hold {
+      max-height: 40px; opacity: 1; padding: 4px 0 3px; }
+    @media (hover: none) { .am-menu-speedx { max-height: 40px; opacity: 1; padding: 4px 0 3px; } }
+    .am-menu-slide { position: relative; flex: 1 1 auto; min-width: 0; height: 18px; cursor: pointer; touch-action: none; }
+    .am-menu-slide::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 4px; translate: 0 -50%;
+      border-radius: 2px; background: rgb(255 255 255 / .18); }
+    .am-menu-slide-fill { position: absolute; left: 0; top: 50%; height: 4px; translate: 0 -50%; border-radius: 2px; background: rgb(255 255 255 / .85); }
+    .am-menu-item.am-on .am-menu-slide-fill { background: #fa586a; }
+    .am-menu-slide-one { position: absolute; top: 50%; width: 2px; height: 10px; translate: -50% -50%; border-radius: 1px; background: rgb(255 255 255 / .45); }
+    .am-menu-slide-knob { position: absolute; top: 50%; width: 12px; height: 12px; translate: -50% -50%; border-radius: 50%;
+      background: #fff; box-shadow: 0 1px 4px rgb(0 0 0 / .45); transition: scale .12s ease; }
+    .am-menu-slide:hover .am-menu-slide-knob, .am-menu-slide.am-drag .am-menu-slide-knob { scale: 1.25; }
+    .am-menu-pitch { flex-shrink: 0; padding: 3px 9px; border-radius: 999px; font-size: calc(11.5px * var(--am-ms));
+      color: rgb(255 255 255 / .6); background: rgb(255 255 255 / .08); box-shadow: inset 0 0 0 1px rgb(255 255 255 / .12);
+      transition: background .12s ease, color .12s ease; }
+    .am-menu-pitch:hover { background: rgb(255 255 255 / .16); color: #fff; }
+    .am-menu-pitch.am-on { color: #fff; background: rgb(250 88 106 / .3); box-shadow: inset 0 0 0 1px rgb(250 88 106 / .6); }
     /* the 3-dot button shows the speed while it is not 1× */
     .am-lcd-more[data-speed] { position: relative; overflow: visible; }
     .am-lcd-more[data-speed]::after { content: attr(data-speed); position: absolute; right: -2px; top: -3px; padding: 1px 4px;

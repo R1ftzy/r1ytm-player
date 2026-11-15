@@ -14,9 +14,7 @@
     toast('Volume ' + val + '%');
   };
   const speedStep = d => {
-    const s = settings.speed;
-    let n = d > 0 ? SPEED_STEPS.find(x => x > s) : [...SPEED_STEPS].reverse().find(x => x < s);
-    if (n === undefined) n = d > 0 ? SPEED_STEPS[SPEED_STEPS.length - 1] : SPEED_STEPS[0];
+    const n = speedStepFrom(settings.speed, d);
     setSpeed(n);
     toast('Speed ' + fmtSpeed(n / 100));
   };
@@ -24,6 +22,19 @@
   const setBarPos = v => {
     settings.barPos = v; applySettings(); saveSettings(); placeBar(); hideBase();
     toast('Bar: ' + POS_NAMES[v]);
+  };
+  // turn a setting on / off (flip: its key). These are not listed again as settings in the command palette
+  const flipSetting = (key, name, after) => () => {
+    const s = SETTINGS.find(x => x.key === key);
+    const v = settings[key] ? 0 : 1;
+    applySetting(s, v);
+    if (after) after();
+    toast(name + ': ' + (v ? 'on' : 'off'));
+  };
+  const cycleLayout = () => {
+    const m = nextLayout();
+    applyMode(m); placeBar(); hideBase();
+    toast('Bar layout: ' + m[0].toUpperCase() + m.slice(1));
   };
   // id, label, default key, run. The order is the order on the Shortcuts page
   const ACTIONS = [
@@ -42,10 +53,23 @@
     { id: 'lyrics', label: 'Lyrics', def: '', run: () => showTab(...LYRICS) },
     { id: 'queue', label: 'Up next (queue)', def: '', run: () => showTab(...UPNEXT) },
     { id: 'zen', label: 'Zen mode', def: 'Alt+Shift+KeyZ', run: () => openZen() },
+    { id: 'shuffle', label: 'Shuffle on / off', def: '', run: clickYt('Shuffle') },
+    { id: 'repeat', label: 'Repeat: off / all / one', def: '', run: clickYt('Repeat') },
     { id: 'barPos', label: 'Next bar position', def: 'Alt+Shift+KeyB', run: () => setBarPos((settings.barPos + 1) % 4) },
+    { id: 'barLayout', label: 'Next bar layout', def: 'Alt+Shift+KeyL', run: cycleLayout },
+    { id: 'barFloat', label: 'Floating bar on / off', def: '', flip: 'barFloat', run: flipSetting('barFloat', 'Floating bar') },
+    { id: 'autoHide', label: 'Auto-hide on / off', def: '', flip: 'autoHide', run: flipSetting('autoHide', 'Auto-hide') },
+    { id: 'peek', label: 'Up-next peek on / off', def: '', flip: 'peek', run: flipSetting('peek', 'Up-next peek') },
+    { id: 'refract', label: 'Refraction on / off', def: '', flip: 'refract', run: () => canRefract ? flipSetting('refract', 'Refraction')() : toast('Refraction needs Chrome, Edge or Brave') },
+    { id: 'artCircle', label: 'Art circle on / off', def: 'Alt+Shift+KeyA', flip: 'artCircle', run: flipSetting('artCircle', 'Art circle') },
+    { id: 'hqArt', label: 'High-quality art on / off', def: '', flip: 'hqArt', run: flipSetting('hqArt', 'High-quality art', () => syncHqArt()) },
+    { id: 'vinyl', label: 'Vinyl on / off', def: 'Alt+Shift+KeyV', flip: 'vinyl', run: flipSetting('vinyl', 'Vinyl') },
+    { id: 'popPage', label: 'Player page pop on / off', def: '', flip: 'popPage', run: flipSetting('popPage', 'Player page pop') },
+    { id: 'keepPitch', label: 'Keep pitch on / off', def: '', flip: 'keepPitch', run: flipSetting('keepPitch', 'Keep pitch', () => syncSpeed()) },
     { id: 'showBar', label: 'Show the bar (auto-hide)', def: 'Alt+Shift+KeyH', run: () => revealBar(3000) },
     { id: 'copyLink', label: 'Copy link to this song', def: 'Alt+Shift+KeyC', run: () => copyNowLink() },
     { id: 'settings', label: 'Open the settings', def: 'Alt+Shift+KeyS', run: () => openSettings() },
+    { id: 'whatsNew', label: "What's new", def: '', run: () => openChangelog('all') },
   ];
   const keys = (() => { try { return JSON.parse(store.get('am-keys', '{}')) || {}; } catch { return {}; } })();
   const keyOf = a => typeof keys[a.id] === 'string' ? keys[a.id] : a.def;
@@ -136,7 +160,7 @@
   const paletteCommands = () => {
     const out = ACTIONS.filter(a => a.id !== 'palette').map(a => ({ label: a.label, hint: showCombo(keyOf(a)) === 'None' ? '' : showCombo(keyOf(a)), run: a.run }));
     for (const s of SETTINGS) {
-      if (!s.group || (s.disabled && s.disabled())) continue;
+      if (!s.group || (s.disabled && s.disabled()) || ACTIONS.some(a => a.flip === s.key)) continue;
       const where = s.group + (s.sub ? ' › ' + s.sub : '');
       if (s.type === 'choice') for (const [t, v] of s.options) {
         out.push({ label: s.label + ': ' + t, hint: where, on: settings[s.key] === v, run: () => { applySetting(s, v); toast(s.label + ': ' + t); } });

@@ -39,7 +39,7 @@
     { group: 'Bar & menus', sub: 'Behavior', key: 'autoHideSong', type: 'toggle', label: 'Show on a new song', min: 0, max: 1, def: 1,
       dep: 'autoHide', note: () => 'For a few seconds' },
     // playback speed (syncSpeed below). Kept in % so the steps stay whole numbers; shown as 1.25×
-    { group: 'Playback', sub: 'Speed', key: 'speed', label: 'Speed', min: 50, max: 200, step: 5, def: 100, unit: '%',
+    { group: 'Playback', sub: 'Speed', key: 'speed', label: 'Speed', min: 50, max: 200, step: 1, def: 100, unit: '%',
       fmt: v => fmtSpeed(v / 100) },
     { group: 'Playback', sub: 'Speed', key: 'keepPitch', type: 'toggle', label: 'Keep pitch', min: 0, max: 1, def: 1,
       note: () => 'Off: the pitch goes up and down with the speed (nightcore / slowed)' },
@@ -244,9 +244,10 @@
       moreBtn.title = badge ? 'More (speed ' + badge + ')' : '';
     }
   };
-  const setSpeed = pct => {
-    settings.speed = Math.max(50, Math.min(200, Math.round(pct / 5) * 5));
-    saveSettings();
+  // pct on a 1% grid (0.01×). live: while a slider is dragged, set it now and save once it is let go
+  const setSpeed = (pct, live) => {
+    settings.speed = Math.max(50, Math.min(200, Math.round(pct)));
+    if (!live) saveSettings();
     syncSpeed();
   };
   /* speed: the values go in one small style sheet, each only on the elements that use it (s.scope), not on <html>.
