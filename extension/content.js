@@ -1987,7 +1987,7 @@
     { group: 'Bar & menus', sub: 'Size & position', key: 'barPos', type: 'choice', label: 'Position',
       options: [['Bottom', 0], ['Top', 1], ['Left', 2], ['Right', 3]],
       min: 0, max: 3, def: 0, change: () => { placeBar(); hideBase(); },
-      note: () => "Top + Compact sits in YouTube Music's header, Left in its sidebar. Phones always use the bottom" },
+      note: () => "Top + Compact sits in YouTube Music's header, Left in its sidebar. Phones, and windows too short for Left / Right, use the bottom" },
     { group: 'Bar & menus', sub: 'Size & position', key: 'barFloat', type: 'toggle', label: 'Floating', min: 0, max: 1, def: 1,
       change: () => { placeBar(); hideBase(); },
       note: () => "Off: the bar fills the width and sits on the edge of the window, like YouTube Music's own" },
@@ -3749,6 +3749,7 @@
   const RAIL_W = 64;             // the rail's width (less in a narrower sidebar column)
   const SIDE_GAP = 8;            // the rail's / card's distance from the edges around it
   const RAIL_SHORT = 470, RAIL_SHORTER = 380;   // a rail shorter than this drops shuffle / repeat, then lyrics / queue
+  const SIDE_BACK = 40;          // after moving to the bottom, the window must grow this much before left / right return
 
   const posBase = el('style', null, document.head);
   posBase.textContent = `
@@ -3882,6 +3883,9 @@
   const posStyle = el('style', null, document.head);
 
   let posNow = 'bottom', inHeader = false, searchOpen = false, floatSpace = 0;
+  // Left / right in a window too short for them: the bar goes to the bottom until the window is taller again.
+  // sideFallback: the window height when that happened (0: not now)
+  let sideFallback = 0;
   let searchNat = 480;           // the pill's own width, measured while we don't change it (YTM's is about 480px)
   html.classList.add('am-pos-bottom');
 
@@ -4101,9 +4105,24 @@
 
   // where the bar goes now. Cheap (it measures only the header), so it runs on every tick, also while the settings
   // panel is open: the position is changed live there.
+  // does the upright bar fit? The rail: its contents (with the short rail's buttons already dropped) must not overflow
+  // it; how much they need depends on the rail's form (full height, or under the sidebar's entries). The card
+  // (expanded sidebar) sits at the bottom of the sidebar column and must not reach up over YTM's header.
+  const sideFits = () => {
+    if (vertForm === 'rail') return bar.scrollHeight <= bar.clientHeight + 2;
+    if (vertForm === 'card') {
+      const nav = navBar(), nb = nav ? nav.getBoundingClientRect().bottom : 64;
+      return bar.getBoundingClientRect().top >= nb + SIDE_GAP;
+    }
+    return true;
+  };
   const placeBar = () => {
-    const pos = isMobile() ? 'bottom' : ['bottom', 'top', 'left', 'right'][settings.barPos] || 'bottom';
+    const want = isMobile() ? 'bottom' : ['bottom', 'top', 'left', 'right'][settings.barPos] || 'bottom';
+    const wantSide = want === 'left' || want === 'right';
+    if (!wantSide || innerHeight >= sideFallback + SIDE_BACK) sideFallback = 0;
+    const pos = wantSide && sideFallback ? 'bottom' : want;
     const side = pos === 'left' || pos === 'right';
+    html.classList.toggle('am-side-fallback', !!sideFallback);
     if (!side) vertForm = '';
     syncLayoutDom();                                       // classic's / the rail's order, but not on a phone
     if (pos !== posNow) {
@@ -4170,7 +4189,10 @@
           border-top: ${space}px solid transparent !important; box-sizing: border-box !important; }`;
     }
     setClass('am-side', side);
-    if (side) css = placeSide(pos);
+    if (side) {
+      css = placeSide(pos);
+      if (!sideFits()) { sideFallback = innerHeight; placeBar(); return; }   // too short: once more, at the bottom
+    }
     else { setClass('am-side-in', false); setClass('am-side-float', false); bar.classList.remove('am-rshort', 'am-rshorter'); }
     if (posStyle.textContent !== css) posStyle.textContent = css;
     if (!railRaf) railSync();                              // left / right: the rail's shape follows it (title-links.js)
@@ -5439,6 +5461,9 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.8', date: '2026-11-16', title: 'Fix for short windows', items: [
+      'Left / right bar: in a window too short for it, the bar moves to the bottom, and goes back to the side when the window is taller again. Before, the rail\'s buttons ran off the bottom of the window and the sidebar card covered YouTube Music\'s header',
+    ] },
     { v: '1.9.7', date: '2026-11-16', title: 'Finer speed and more shortcuts', items: [
       'Speed: point at Speed in the 3-dot menu and it folds out a slider, from 0.5× to 2× in 0.01× steps (it snaps to 1×), and a Keep pitch switch. − and + now step by 0.05×, and so do the speed shortcuts',
       'New shortcuts (Settings > Shortcuts, and in the Ctrl+K palette): Art circle (Alt+Shift+A), Vinyl (Alt+Shift+V), next bar layout (Alt+Shift+L), and, with no key until you set one: shuffle, repeat, floating bar, auto-hide, up-next peek, refraction, high-quality art, player page pop, keep pitch and What\'s new',
@@ -7140,7 +7165,7 @@
     edge.remove();
     rope.remove();
     document.documentElement.classList.remove('am-pos-' + posNow, 'am-in-header', 'am-top-float', 'am-search-open', 'am-dock',
-      'am-side', 'am-side-in', 'am-side-float', 'am-side-full', 'am-brand-on');
+      'am-side', 'am-side-in', 'am-side-float', 'am-side-full', 'am-side-fallback', 'am-brand-on');
     document.documentElement.classList.remove('am-refract', 'am-easy-track', 'am-show-volpct', 'am-ah');
     refractDefs.remove();
     document.documentElement.classList.remove('am-player-open', 'am-animating', 'am-fs', 'am-mini-hidden');

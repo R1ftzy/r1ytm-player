@@ -27,6 +27,7 @@
   const RAIL_W = 64;             // the rail's width (less in a narrower sidebar column)
   const SIDE_GAP = 8;            // the rail's / card's distance from the edges around it
   const RAIL_SHORT = 470, RAIL_SHORTER = 380;   // a rail shorter than this drops shuffle / repeat, then lyrics / queue
+  const SIDE_BACK = 40;          // after moving to the bottom, the window must grow this much before left / right return
 
   const posBase = el('style', null, document.head);
   posBase.textContent = `
@@ -160,6 +161,9 @@
   const posStyle = el('style', null, document.head);
 
   let posNow = 'bottom', inHeader = false, searchOpen = false, floatSpace = 0;
+  // Left / right in a window too short for them: the bar goes to the bottom until the window is taller again.
+  // sideFallback: the window height when that happened (0: not now)
+  let sideFallback = 0;
   let searchNat = 480;           // the pill's own width, measured while we don't change it (YTM's is about 480px)
   html.classList.add('am-pos-bottom');
 
@@ -379,9 +383,24 @@
 
   // where the bar goes now. Cheap (it measures only the header), so it runs on every tick, also while the settings
   // panel is open: the position is changed live there.
+  // does the upright bar fit? The rail: its contents (with the short rail's buttons already dropped) must not overflow
+  // it; how much they need depends on the rail's form (full height, or under the sidebar's entries). The card
+  // (expanded sidebar) sits at the bottom of the sidebar column and must not reach up over YTM's header.
+  const sideFits = () => {
+    if (vertForm === 'rail') return bar.scrollHeight <= bar.clientHeight + 2;
+    if (vertForm === 'card') {
+      const nav = navBar(), nb = nav ? nav.getBoundingClientRect().bottom : 64;
+      return bar.getBoundingClientRect().top >= nb + SIDE_GAP;
+    }
+    return true;
+  };
   const placeBar = () => {
-    const pos = isMobile() ? 'bottom' : ['bottom', 'top', 'left', 'right'][settings.barPos] || 'bottom';
+    const want = isMobile() ? 'bottom' : ['bottom', 'top', 'left', 'right'][settings.barPos] || 'bottom';
+    const wantSide = want === 'left' || want === 'right';
+    if (!wantSide || innerHeight >= sideFallback + SIDE_BACK) sideFallback = 0;
+    const pos = wantSide && sideFallback ? 'bottom' : want;
     const side = pos === 'left' || pos === 'right';
+    html.classList.toggle('am-side-fallback', !!sideFallback);
     if (!side) vertForm = '';
     syncLayoutDom();                                       // classic's / the rail's order, but not on a phone
     if (pos !== posNow) {
@@ -448,7 +467,10 @@
           border-top: ${space}px solid transparent !important; box-sizing: border-box !important; }`;
     }
     setClass('am-side', side);
-    if (side) css = placeSide(pos);
+    if (side) {
+      css = placeSide(pos);
+      if (!sideFits()) { sideFallback = innerHeight; placeBar(); return; }   // too short: once more, at the bottom
+    }
     else { setClass('am-side-in', false); setClass('am-side-float', false); bar.classList.remove('am-rshort', 'am-rshorter'); }
     if (posStyle.textContent !== css) posStyle.textContent = css;
     if (!railRaf) railSync();                              // left / right: the rail's shape follows it (title-links.js)

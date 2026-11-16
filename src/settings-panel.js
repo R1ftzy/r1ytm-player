@@ -23,7 +23,7 @@
     { group: 'Bar & menus', sub: 'Size & position', key: 'barPos', type: 'choice', label: 'Position',
       options: [['Bottom', 0], ['Top', 1], ['Left', 2], ['Right', 3]],
       min: 0, max: 3, def: 0, change: () => { placeBar(); hideBase(); },
-      note: () => "Top + Compact sits in YouTube Music's header, Left in its sidebar. Phones always use the bottom" },
+      note: () => "Top + Compact sits in YouTube Music's header, Left in its sidebar. Phones, and windows too short for Left / Right, use the bottom" },
     { group: 'Bar & menus', sub: 'Size & position', key: 'barFloat', type: 'toggle', label: 'Floating', min: 0, max: 1, def: 1,
       change: () => { placeBar(); hideBase(); },
       note: () => "Off: the bar fills the width and sits on the edge of the window, like YouTube Music's own" },
