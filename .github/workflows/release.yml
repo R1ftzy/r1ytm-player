@@ -1,0 +1,101 @@
+# Release a new version when the version in extension/manifest.json changes on main.
+#
+#  1. Check that the built files (extension/content.js, r1ytm.user.js) match src/ (`node build.mjs --check`).
+#  2. Submit the version to Firefox Add-ons (AMO, listed channel), with the release notes from src/changelog.js.
+#     AMO still reviews it; this step does not wait for the review.
+#  3. Create the GitHub release v<version> with the .xpi and the user script attached.
+#
+# A version that already has a GitHub release is skipped, so a push that does not bump the version does nothing.
+# A version that is already on AMO but has no GitHub release (e.g. uploaded by hand) only gets the GitHub release.
+# Run it by hand from the Actions tab (workflow_dispatch) to retry a failed release.
+#
+# Secrets (repo Settings > Secrets and variables > Actions), from https://addons.mozilla.org/developers/addon/api/key/ :
+#   AMO_JWT_ISSUER   the "JWT issuer"
+#   AMO_JWT_SECRET   the "JWT secret"
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [extension/manifest.json]
+  workflow_dispatch:
+
+permissions:
+  contents: write          # to create the GitHub release and its tag
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Version
+        id: v
+        run: |
+          v=$(node -p "require('./extension/manifest.json').version")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if gh release view "v$v" >/dev/null 2>&1; then
+            echo "v$v is already released: nothing to do"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Built files match src/
+        if: steps.v.outputs.skip != 'true'
+        run: node build.mjs --check
+
+      - name: Release notes
+        if: steps.v.outputs.skip != 'true'
+        run: |
+          node scripts/release-notes.mjs "${{ steps.v.outputs.version }}" > notes.md
+          node scripts/release-notes.mjs "${{ steps.v.outputs.version }}" --amo > amo-metadata.json
+          cat notes.md
+
+      - name: Package
+        if: steps.v.outputs.skip != 'true'
+        run: |
+          cd extension
+          zip -qr -X "../r1ytm-${{ steps.v.outputs.version }}.xpi" manifest.json content.js icons
+
+      # A version that is already on AMO (uploaded by hand) is not an error: the GitHub release is still made.
+      - name: Submit to Firefox Add-ons
+        if: steps.v.outputs.skip != 'true'
+        run: |
+          set +e
+          npx --yes web-ext@8 sign \
+            --source-dir extension \
+            --channel listed \
+            --amo-metadata amo-metadata.json \
+            --approval-timeout 0 \
+            --api-key "$AMO_JWT_ISSUER" \
+            --api-secret "$AMO_JWT_SECRET" 2>&1 | tee sign.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ] && grep -qi "already exists" sign.log; then
+            echo "::notice::This version is already on Firefox Add-ons: not submitted again"
+            exit 0
+          fi
+          exit "$code"
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+
+      - name: GitHub release
+        if: steps.v.outputs.skip != 'true'
+        run: >
+          gh release create "v${{ steps.v.outputs.version }}"
+          --target "$GITHUB_SHA"
+          --title "v${{ steps.v.outputs.version }}"
+          --notes-file notes.md
+          "r1ytm-${{ steps.v.outputs.version }}.xpi" r1ytm.user.js
+        env:
+          GH_TOKEN: ${{ github.token }}
