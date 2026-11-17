@@ -28,12 +28,17 @@
 
   let peekT = 0, peekOn = false, peekRaf = 0, peekWait = 0, peekG = null;
 
-  // the queue in play order, one row per entry: rows inside something hidden (the other version of a song / video
-  // pair, which YTM keeps next to it) and rows not drawn are left out
+  // the queue in play order, one row per entry: rows hidden inside the queue (the other version of a song / video
+  // pair, which YTM keeps next to it) and rows not drawn are left out. Only a [hidden] inside the queue counts: on
+  // the Lyrics / Related tab YTM hides the whole Up next panel (a [hidden] around the queue), and the rows are still
+  // the queue, so the peek works on every tab
   const queueItems = () => {
     const page = playerPage();
-    return [...(page || document).querySelectorAll('ytmusic-player-queue-item')]
-      .filter(n => n.data && !n.closest('[hidden]') && getComputedStyle(n).display !== 'none');
+    return [...(page || document).querySelectorAll('ytmusic-player-queue-item')].filter(n => {
+      if (!n.data || getComputedStyle(n).display === 'none') return false;
+      const h = n.closest('[hidden]'), q = n.closest('ytmusic-player-queue');
+      return !h || !q || !q.contains(h);
+    });
   };
   const itemInfo = n => {
     const d = n.data || {};

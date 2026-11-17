@@ -5,7 +5,8 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
-    { v: '1.9.8', date: '2026-11-16', title: 'Fix for short windows', items: [
+    { v: '1.9.8', date: '2026-11-16', title: 'Fixes: short windows and the up-next peek', items: [
+      'Up-next peek: works again while the player page shows Lyrics or Related (or was left on them)',
       'Left / right bar: in a window too short for it, the bar moves to the bottom, and goes back to the side when the window is taller again. Before, the rail\'s buttons ran off the bottom of the window and the sidebar card covered YouTube Music\'s header',
     ] },
     { v: '1.9.7', date: '2026-11-16', title: 'Finer speed and more shortcuts', items: [

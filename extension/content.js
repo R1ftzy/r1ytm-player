@@ -5461,7 +5461,8 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
-    { v: '1.9.8', date: '2026-11-16', title: 'Fix for short windows', items: [
+    { v: '1.9.8', date: '2026-11-16', title: 'Fixes: short windows and the up-next peek', items: [
+      'Up-next peek: works again while the player page shows Lyrics or Related (or was left on them)',
       'Left / right bar: in a window too short for it, the bar moves to the bottom, and goes back to the side when the window is taller again. Before, the rail\'s buttons ran off the bottom of the window and the sidebar card covered YouTube Music\'s header',
     ] },
     { v: '1.9.7', date: '2026-11-16', title: 'Finer speed and more shortcuts', items: [
@@ -6290,12 +6291,17 @@
 
   let peekT = 0, peekOn = false, peekRaf = 0, peekWait = 0, peekG = null;
 
-  // the queue in play order, one row per entry: rows inside something hidden (the other version of a song / video
-  // pair, which YTM keeps next to it) and rows not drawn are left out
+  // the queue in play order, one row per entry: rows hidden inside the queue (the other version of a song / video
+  // pair, which YTM keeps next to it) and rows not drawn are left out. Only a [hidden] inside the queue counts: on
+  // the Lyrics / Related tab YTM hides the whole Up next panel (a [hidden] around the queue), and the rows are still
+  // the queue, so the peek works on every tab
   const queueItems = () => {
     const page = playerPage();
-    return [...(page || document).querySelectorAll('ytmusic-player-queue-item')]
-      .filter(n => n.data && !n.closest('[hidden]') && getComputedStyle(n).display !== 'none');
+    return [...(page || document).querySelectorAll('ytmusic-player-queue-item')].filter(n => {
+      if (!n.data || getComputedStyle(n).display === 'none') return false;
+      const h = n.closest('[hidden]'), q = n.closest('ytmusic-player-queue');
+      return !h || !q || !q.contains(h);
+    });
   };
   const itemInfo = n => {
     const d = n.data || {};
