@@ -211,20 +211,31 @@
   addEventListener('focusin', syncSearch, true);
   addEventListener('focusout', () => setTimeout(syncSearch, 0), true);    // focus has moved on only after the event
 
-  // the glass behind YTM's search suggestions (styles.js): a layer of its own, laid over the list's place every frame
-  // while a search box is open, hidden once it closes
-  const searchGlass = el('div', 'am-search-glass', document.body);
+  // the glass behind YTM's search suggestions (styles.js): one box per section of suggestions (searches, then songs /
+  // artists), each a layer of its own laid over the section's place every frame while a search box is open, hidden
+  // once it closes. Kept in a holder so amOff() removes them all at once
+  const searchGlass = el('div', 'am-search-glasses', document.body);
   let glassRaf = 0;
   const glassFrame = () => {
     glassRaf = 0;
     const list = document.querySelector('ytmusic-search-box[opened] #suggestion-list');
-    const r = list && list.getBoundingClientRect();
-    const show = !!r && r.height > 8 && getComputedStyle(list).display !== 'none' && !zenEl;
-    searchGlass.classList.toggle('am-on', show);
-    if (show) Object.assign(searchGlass.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
-    if (document.querySelector('ytmusic-search-box[opened]')) glassRaf = requestAnimationFrame(glassFrame);
+    const on = !!list && getComputedStyle(list).display !== 'none' && !zenEl;
+    const rects = on ? [...list.querySelectorAll('ytmusic-search-suggestions-section')]
+      .map(s => s.getBoundingClientRect()).filter(r => r.height > 8) : [];
+    while (searchGlass.children.length < rects.length) el('div', 'am-search-glass', searchGlass);
+    [...searchGlass.children].forEach((g, i) => {
+      const r = rects[i];
+      g.classList.toggle('am-on', !!r);
+      if (r) Object.assign(g.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+    });
+    if (searchActive()) glassRaf = requestAnimationFrame(glassFrame);
   };
-  const syncSearchGlass = () => { if (!glassRaf) glassRaf = requestAnimationFrame(glassFrame); };
+  // a search box open, or about to be: YTM marks it [opened] a moment after it gets focus, and on a second focus with
+  // text already typed it brings the suggestions back only after that, with no input event
+  const searchActive = () => !!document.querySelector('ytmusic-search-box[opened], ytmusic-search-box:focus-within');
+  // also called by the sync loop (4 times a second), so a list that opens without a focus or input event still
+  // gets its glass
+  const syncSearchGlass = () => { if (!glassRaf && searchActive()) glassRaf = requestAnimationFrame(glassFrame); };
   addEventListener('focusin', syncSearchGlass, true);
   addEventListener('input', syncSearchGlass, true);
 

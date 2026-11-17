@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         r1ytm
 // @namespace    r1ytm
-// @version      1.9.7
+// @version      1.9.8
 // @description  A floating, Apple Music-style control bar for YouTube Music.
 // @match        https://music.youtube.com/*
 // @grant        none
@@ -14,7 +14,7 @@
 // Injected on https://music.youtube.com/* only.
 (() => {
   'use strict';
-  const VERSION = '1.9.7';
+  const VERSION = '1.9.8';
 
   /* ---------- settings ---------- */
   const PLAYER_PAGE_BAR_SPACE = '88px';          // space the player page keeps free for the bar until it's measured (follows the bar size)
@@ -1276,22 +1276,28 @@
 
     @media (prefers-reduced-motion: reduce) { .am-menu { animation: none; } .am-menu.am-menu-out { transition: none; } }
 
-    /* YTM's search box. While you type, YTM paints the box and its suggestions solid black (rgb(3 3 3)): the box keeps
-       its idle see-through look instead, and the suggestions sit on a panel of our menu glass (Menu opacity / blur).
-       Chrome does not blur behind the list where it is (inside YTM's fixed header), so the list is see-through and
-       the glass is a layer of its own (.am-search-glass, bar-position.js), under the header and over the page */
+    /* YTM's search box. While you type, YTM paints the box and its suggestions solid black (rgb(3 3 3)). Instead the
+       box keeps its idle look, and each section of suggestions (searches, then songs / artists) is a box in the same
+       style: the box's light tint, border and corners, the text at the box's size (16px), a line between rows.
+       Chrome does not blur behind the list where it is (inside YTM's fixed header), so the sections are see-through
+       and their blurred backing is a layer of its own per section (.am-search-glass, bar-position.js) */
     ytmusic-search-box[opened] .search-box { background: rgb(255 255 255 / .15) !important; }
-    ytmusic-search-box #suggestion-list { margin-top: 6px; padding: 6px 0; border-radius: 18px !important;
+    ytmusic-search-box #suggestion-list { margin-top: 6px; padding: 0; border-radius: 0 !important; overflow: visible !important;
       background: transparent !important; border: 0 !important; box-shadow: none !important; }
-    ytmusic-search-box #suggestion-list :is(ytmusic-search-suggestions-section, ytmusic-search-suggestion,
-      ytmusic-responsive-list-item-renderer) { background: transparent !important; }
+    ytmusic-search-box #suggestion-list ytmusic-search-suggestions-section { display: block; margin-bottom: 6px; border-radius: 8px;
+      overflow: hidden; background: transparent !important; }
+    ytmusic-search-box #suggestion-list :is(ytmusic-search-suggestion, ytmusic-responsive-list-item-renderer) {
+      background: transparent !important; }
+    ytmusic-search-box #suggestion-list :is(ytmusic-search-suggestion, ytmusic-responsive-list-item-renderer)
+      + :is(ytmusic-search-suggestion, ytmusic-responsive-list-item-renderer) { border-top: 1px solid rgb(255 255 255 / .1) !important; }
+    ytmusic-search-box #suggestion-list ytmusic-search-suggestion yt-formatted-string { font-size: 16px !important; line-height: 22px !important; }
     ytmusic-search-box #suggestion-list :is(ytmusic-search-suggestion, ytmusic-responsive-list-item-renderer):hover,
     ytmusic-search-box #suggestion-list .selected-suggestion { background: rgb(255 255 255 / .1) !important; }
-    .am-search-glass { position: fixed; z-index: 4; display: none; pointer-events: none; box-sizing: border-box;
-      border-radius: 18px; background: rgb(34 34 36 / var(--am-menu-a, .72));
-      backdrop-filter: blur(var(--am-menu-blur, 40px)) saturate(190%); -webkit-backdrop-filter: blur(var(--am-menu-blur, 40px)) saturate(190%);
-      border: 1px solid rgb(255 255 255 / .12);
-      box-shadow: 0 18px 50px rgb(0 0 0 / .45), 0 2px 8px rgb(0 0 0 / .25), inset 0 1px 0 rgb(255 255 255 / .07); }
+    .am-search-glass { position: fixed; z-index: 4; display: none; pointer-events: none; box-sizing: border-box; border-radius: 8px;
+      background: rgb(255 255 255 / .12);
+      backdrop-filter: blur(var(--am-menu-blur, 40px)) brightness(.55) saturate(160%);
+      -webkit-backdrop-filter: blur(var(--am-menu-blur, 40px)) brightness(.55) saturate(160%);
+      border: 1px solid rgb(255 255 255 / .15); box-shadow: 0 12px 32px rgb(0 0 0 / .35); }
     .am-search-glass.am-on { display: block; }
 
     .am-lcd { position: relative; min-width: 0; height: calc(52px * var(--am-s, 1)); display: flex; align-items: center; gap: 10px;
@@ -2001,7 +2007,7 @@
     { group: 'Bar & menus', sub: 'Transparency', key: 'barBlur', label: 'Bar blur', min: 0, max: 60, step: 1, def: 28, unit: 'px',
       css: v => ['--am-bar-blur', v + 'px'], scope: '.am-bar, .am-fly' },
     { group: 'Bar & menus', sub: 'Transparency', key: 'menuAlpha', label: 'Menu opacity', min: 30, max: 98, step: 1, def: 72, unit: '%',
-      css: v => ['--am-menu-a', v / 100], scope: '.am-menu, .am-search-glass' },
+      css: v => ['--am-menu-a', v / 100], scope: '.am-menu' },
     { group: 'Bar & menus', sub: 'Transparency', key: 'menuBlur', label: 'Menu blur', min: 0, max: 80, step: 1, def: 40, unit: 'px',
       css: v => ['--am-menu-blur', v + 'px'], scope: '.am-menu, .am-search-glass' },
     { group: 'Bar & menus', sub: 'Glass', key: 'refract', type: 'toggle', label: 'Refraction', min: 0, max: 1, def: 0,
@@ -3962,20 +3968,31 @@
   addEventListener('focusin', syncSearch, true);
   addEventListener('focusout', () => setTimeout(syncSearch, 0), true);    // focus has moved on only after the event
 
-  // the glass behind YTM's search suggestions (styles.js): a layer of its own, laid over the list's place every frame
-  // while a search box is open, hidden once it closes
-  const searchGlass = el('div', 'am-search-glass', document.body);
+  // the glass behind YTM's search suggestions (styles.js): one box per section of suggestions (searches, then songs /
+  // artists), each a layer of its own laid over the section's place every frame while a search box is open, hidden
+  // once it closes. Kept in a holder so amOff() removes them all at once
+  const searchGlass = el('div', 'am-search-glasses', document.body);
   let glassRaf = 0;
   const glassFrame = () => {
     glassRaf = 0;
     const list = document.querySelector('ytmusic-search-box[opened] #suggestion-list');
-    const r = list && list.getBoundingClientRect();
-    const show = !!r && r.height > 8 && getComputedStyle(list).display !== 'none' && !zenEl;
-    searchGlass.classList.toggle('am-on', show);
-    if (show) Object.assign(searchGlass.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
-    if (document.querySelector('ytmusic-search-box[opened]')) glassRaf = requestAnimationFrame(glassFrame);
+    const on = !!list && getComputedStyle(list).display !== 'none' && !zenEl;
+    const rects = on ? [...list.querySelectorAll('ytmusic-search-suggestions-section')]
+      .map(s => s.getBoundingClientRect()).filter(r => r.height > 8) : [];
+    while (searchGlass.children.length < rects.length) el('div', 'am-search-glass', searchGlass);
+    [...searchGlass.children].forEach((g, i) => {
+      const r = rects[i];
+      g.classList.toggle('am-on', !!r);
+      if (r) Object.assign(g.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+    });
+    if (searchActive()) glassRaf = requestAnimationFrame(glassFrame);
   };
-  const syncSearchGlass = () => { if (!glassRaf) glassRaf = requestAnimationFrame(glassFrame); };
+  // a search box open, or about to be: YTM marks it [opened] a moment after it gets focus, and on a second focus with
+  // text already typed it brings the suggestions back only after that, with no input event
+  const searchActive = () => !!document.querySelector('ytmusic-search-box[opened], ytmusic-search-box:focus-within');
+  // also called by the sync loop (4 times a second), so a list that opens without a focus or input event still
+  // gets its glass
+  const syncSearchGlass = () => { if (!glassRaf && searchActive()) glassRaf = requestAnimationFrame(glassFrame); };
   addEventListener('focusin', syncSearchGlass, true);
   addEventListener('input', syncSearchGlass, true);
 
@@ -5509,7 +5526,7 @@
   const CHANGELOG = [
     { v: '1.9.8', date: '2026-11-16', title: 'Fixes: short windows, the up-next peek and the search box', items: [
       'Up-next peek: works again while the player page shows Lyrics or Related (or was left on them)',
-      'The search box keeps its see-through look while you type (YouTube Music turned it black), and the suggestions show on the same glass as r1ytm\'s menus (Menu opacity and blur)',
+      'The search box keeps its see-through look while you type (YouTube Music turned it black). The suggestions show in boxes styled like the search box, one for searches and one for songs and artists, with the text at the same size and a line between results',
       'Left / right bar: in a window too short for it, the bar moves to the bottom, and goes back to the side when the window is taller again. Before, the rail\'s buttons ran off the bottom of the window and the sidebar card covered YouTube Music\'s header',
     ] },
     { v: '1.9.7', date: '2026-11-16', title: 'Finer speed and more shortcuts', items: [
@@ -7105,6 +7122,7 @@
     if (tick % 4 === 1 && !busy) syncHqArt();             // high-quality art (off by default)
     placeBar();                                           // bottom / top, in or under the header
     syncSearch();
+    syncSearchGlass();                                    // the glass behind search suggestions (bar-position.js)
     updateRefractMap();                                   // no-op unless refraction is on and the bar changed size
     watchPage();
     onPageState();

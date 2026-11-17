@@ -7,7 +7,7 @@
   const CHANGELOG = [
     { v: '1.9.8', date: '2026-11-16', title: 'Fixes: short windows, the up-next peek and the search box', items: [
       'Up-next peek: works again while the player page shows Lyrics or Related (or was left on them)',
-      'The search box keeps its see-through look while you type (YouTube Music turned it black), and the suggestions show on the same glass as r1ytm\'s menus (Menu opacity and blur)',
+      'The search box keeps its see-through look while you type (YouTube Music turned it black). The suggestions show in boxes styled like the search box, one for searches and one for songs and artists, with the text at the same size and a line between results',
       'Left / right bar: in a window too short for it, the bar moves to the bottom, and goes back to the side when the window is taller again. Before, the rail\'s buttons ran off the bottom of the window and the sidebar card covered YouTube Music\'s header',
     ] },
     { v: '1.9.7', date: '2026-11-16', title: 'Finer speed and more shortcuts', items: [

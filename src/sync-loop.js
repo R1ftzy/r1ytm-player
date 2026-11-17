@@ -23,6 +23,7 @@
     if (tick % 4 === 1 && !busy) syncHqArt();             // high-quality art (off by default)
     placeBar();                                           // bottom / top, in or under the header
     syncSearch();
+    syncSearchGlass();                                    // the glass behind search suggestions (bar-position.js)
     updateRefractMap();                                   // no-op unless refraction is on and the bar changed size
     watchPage();
     onPageState();

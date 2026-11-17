@@ -8,7 +8,7 @@
     { group: 'Bar & menus', sub: 'Transparency', key: 'barBlur', label: 'Bar blur', min: 0, max: 60, step: 1, def: 28, unit: 'px',
       css: v => ['--am-bar-blur', v + 'px'], scope: '.am-bar, .am-fly' },
     { group: 'Bar & menus', sub: 'Transparency', key: 'menuAlpha', label: 'Menu opacity', min: 30, max: 98, step: 1, def: 72, unit: '%',
-      css: v => ['--am-menu-a', v / 100], scope: '.am-menu, .am-search-glass' },
+      css: v => ['--am-menu-a', v / 100], scope: '.am-menu' },
     { group: 'Bar & menus', sub: 'Transparency', key: 'menuBlur', label: 'Menu blur', min: 0, max: 80, step: 1, def: 40, unit: 'px',
       css: v => ['--am-menu-blur', v + 'px'], scope: '.am-menu, .am-search-glass' },
     { group: 'Bar & menus', sub: 'Glass', key: 'refract', type: 'toggle', label: 'Refraction', min: 0, max: 1, def: 0,
