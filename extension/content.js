@@ -1265,6 +1265,24 @@
 
     @media (prefers-reduced-motion: reduce) { .am-menu { animation: none; } .am-menu.am-menu-out { transition: none; } }
 
+    /* YTM's search box. While you type, YTM paints the box and its suggestions solid black (rgb(3 3 3)): the box keeps
+       its idle see-through look instead, and the suggestions sit on a panel of our menu glass (Menu opacity / blur).
+       Chrome does not blur behind the list where it is (inside YTM's fixed header), so the list is see-through and
+       the glass is a layer of its own (.am-search-glass, bar-position.js), under the header and over the page */
+    ytmusic-search-box[opened] .search-box { background: rgb(255 255 255 / .15) !important; }
+    ytmusic-search-box #suggestion-list { margin-top: 6px; padding: 6px 0; border-radius: 18px !important;
+      background: transparent !important; border: 0 !important; box-shadow: none !important; }
+    ytmusic-search-box #suggestion-list :is(ytmusic-search-suggestions-section, ytmusic-search-suggestion,
+      ytmusic-responsive-list-item-renderer) { background: transparent !important; }
+    ytmusic-search-box #suggestion-list :is(ytmusic-search-suggestion, ytmusic-responsive-list-item-renderer):hover,
+    ytmusic-search-box #suggestion-list .selected-suggestion { background: rgb(255 255 255 / .1) !important; }
+    .am-search-glass { position: fixed; z-index: 4; display: none; pointer-events: none; box-sizing: border-box;
+      border-radius: 18px; background: rgb(34 34 36 / var(--am-menu-a, .72));
+      backdrop-filter: blur(var(--am-menu-blur, 40px)) saturate(190%); -webkit-backdrop-filter: blur(var(--am-menu-blur, 40px)) saturate(190%);
+      border: 1px solid rgb(255 255 255 / .12);
+      box-shadow: 0 18px 50px rgb(0 0 0 / .45), 0 2px 8px rgb(0 0 0 / .25), inset 0 1px 0 rgb(255 255 255 / .07); }
+    .am-search-glass.am-on { display: block; }
+
     .am-lcd { position: relative; min-width: 0; height: calc(52px * var(--am-s, 1)); display: flex; align-items: center; gap: 10px;
       padding: 0 12px 0 4px; border-radius: 11px; background: transparent; border: none; }
     .am-art { width: calc(44px * var(--am-s, 1)); height: calc(44px * var(--am-s, 1)); border-radius: var(--am-art-r, 8px); object-fit: cover; flex-shrink: 0; }
@@ -1972,9 +1990,9 @@
     { group: 'Bar & menus', sub: 'Transparency', key: 'barBlur', label: 'Bar blur', min: 0, max: 60, step: 1, def: 28, unit: 'px',
       css: v => ['--am-bar-blur', v + 'px'], scope: '.am-bar, .am-fly' },
     { group: 'Bar & menus', sub: 'Transparency', key: 'menuAlpha', label: 'Menu opacity', min: 30, max: 98, step: 1, def: 72, unit: '%',
-      css: v => ['--am-menu-a', v / 100], scope: '.am-menu' },
+      css: v => ['--am-menu-a', v / 100], scope: '.am-menu, .am-search-glass' },
     { group: 'Bar & menus', sub: 'Transparency', key: 'menuBlur', label: 'Menu blur', min: 0, max: 80, step: 1, def: 40, unit: 'px',
-      css: v => ['--am-menu-blur', v + 'px'], scope: '.am-menu' },
+      css: v => ['--am-menu-blur', v + 'px'], scope: '.am-menu, .am-search-glass' },
     { group: 'Bar & menus', sub: 'Glass', key: 'refract', type: 'toggle', label: 'Refraction', min: 0, max: 1, def: 0,
       note: () => canRefract ? 'Bends the background at the edges of the bar' : 'Needs Chrome, Edge or Brave',
       disabled: () => !canRefract },
@@ -3933,6 +3951,23 @@
   addEventListener('focusin', syncSearch, true);
   addEventListener('focusout', () => setTimeout(syncSearch, 0), true);    // focus has moved on only after the event
 
+  // the glass behind YTM's search suggestions (styles.js): a layer of its own, laid over the list's place every frame
+  // while a search box is open, hidden once it closes
+  const searchGlass = el('div', 'am-search-glass', document.body);
+  let glassRaf = 0;
+  const glassFrame = () => {
+    glassRaf = 0;
+    const list = document.querySelector('ytmusic-search-box[opened] #suggestion-list');
+    const r = list && list.getBoundingClientRect();
+    const show = !!r && r.height > 8 && getComputedStyle(list).display !== 'none' && !zenEl;
+    searchGlass.classList.toggle('am-on', show);
+    if (show) Object.assign(searchGlass.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+    if (document.querySelector('ytmusic-search-box[opened]')) glassRaf = requestAnimationFrame(glassFrame);
+  };
+  const syncSearchGlass = () => { if (!glassRaf) glassRaf = requestAnimationFrame(glassFrame); };
+  addEventListener('focusin', syncSearchGlass, true);
+  addEventListener('input', syncSearchGlass, true);
+
   // YTM's sidebar column on screen now: the guide whose primary section (Home / Explore / Library) is visible at the
   // left edge. YTM keeps two (expanded and mini) and can leave one "visible" off-screen, so it is checked by place.
   const activeGuide = () => {
@@ -5461,8 +5496,9 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
-    { v: '1.9.8', date: '2026-11-16', title: 'Fixes: short windows and the up-next peek', items: [
+    { v: '1.9.8', date: '2026-11-16', title: 'Fixes: short windows, the up-next peek and the search box', items: [
       'Up-next peek: works again while the player page shows Lyrics or Related (or was left on them)',
+      'The search box keeps its see-through look while you type (YouTube Music turned it black), and the suggestions show on the same glass as r1ytm\'s menus (Menu opacity and blur)',
       'Left / right bar: in a window too short for it, the bar moves to the bottom, and goes back to the side when the window is taller again. Before, the rail\'s buttons ran off the bottom of the window and the sidebar card covered YouTube Music\'s header',
     ] },
     { v: '1.9.7', date: '2026-11-16', title: 'Finer speed and more shortcuts', items: [
@@ -7161,6 +7197,7 @@
     setVars.remove();
     posBase.remove();
     posStyle.remove();
+    searchGlass.remove();
     ['--am-hx', '--am-hw', '--am-hy', '--am-vx', '--am-vw', '--am-vy', '--am-vb', '--am-rpad'].forEach(v => bar.style.removeProperty(v));
     gFoot.remove();
     if (brandEl) brandEl.remove();

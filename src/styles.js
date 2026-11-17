@@ -186,6 +186,24 @@
 
     @media (prefers-reduced-motion: reduce) { .am-menu { animation: none; } .am-menu.am-menu-out { transition: none; } }
 
+    /* YTM's search box. While you type, YTM paints the box and its suggestions solid black (rgb(3 3 3)): the box keeps
+       its idle see-through look instead, and the suggestions sit on a panel of our menu glass (Menu opacity / blur).
+       Chrome does not blur behind the list where it is (inside YTM's fixed header), so the list is see-through and
+       the glass is a layer of its own (.am-search-glass, bar-position.js), under the header and over the page */
+    ytmusic-search-box[opened] .search-box { background: rgb(255 255 255 / .15) !important; }
+    ytmusic-search-box #suggestion-list { margin-top: 6px; padding: 6px 0; border-radius: 18px !important;
+      background: transparent !important; border: 0 !important; box-shadow: none !important; }
+    ytmusic-search-box #suggestion-list :is(ytmusic-search-suggestions-section, ytmusic-search-suggestion,
+      ytmusic-responsive-list-item-renderer) { background: transparent !important; }
+    ytmusic-search-box #suggestion-list :is(ytmusic-search-suggestion, ytmusic-responsive-list-item-renderer):hover,
+    ytmusic-search-box #suggestion-list .selected-suggestion { background: rgb(255 255 255 / .1) !important; }
+    .am-search-glass { position: fixed; z-index: 4; display: none; pointer-events: none; box-sizing: border-box;
+      border-radius: 18px; background: rgb(34 34 36 / var(--am-menu-a, .72));
+      backdrop-filter: blur(var(--am-menu-blur, 40px)) saturate(190%); -webkit-backdrop-filter: blur(var(--am-menu-blur, 40px)) saturate(190%);
+      border: 1px solid rgb(255 255 255 / .12);
+      box-shadow: 0 18px 50px rgb(0 0 0 / .45), 0 2px 8px rgb(0 0 0 / .25), inset 0 1px 0 rgb(255 255 255 / .07); }
+    .am-search-glass.am-on { display: block; }
+
     .am-lcd { position: relative; min-width: 0; height: calc(52px * var(--am-s, 1)); display: flex; align-items: center; gap: 10px;
       padding: 0 12px 0 4px; border-radius: 11px; background: transparent; border: none; }
     .am-art { width: calc(44px * var(--am-s, 1)); height: calc(44px * var(--am-s, 1)); border-radius: var(--am-art-r, 8px); object-fit: cover; flex-shrink: 0; }

@@ -211,6 +211,23 @@
   addEventListener('focusin', syncSearch, true);
   addEventListener('focusout', () => setTimeout(syncSearch, 0), true);    // focus has moved on only after the event
 
+  // the glass behind YTM's search suggestions (styles.js): a layer of its own, laid over the list's place every frame
+  // while a search box is open, hidden once it closes
+  const searchGlass = el('div', 'am-search-glass', document.body);
+  let glassRaf = 0;
+  const glassFrame = () => {
+    glassRaf = 0;
+    const list = document.querySelector('ytmusic-search-box[opened] #suggestion-list');
+    const r = list && list.getBoundingClientRect();
+    const show = !!r && r.height > 8 && getComputedStyle(list).display !== 'none' && !zenEl;
+    searchGlass.classList.toggle('am-on', show);
+    if (show) Object.assign(searchGlass.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+    if (document.querySelector('ytmusic-search-box[opened]')) glassRaf = requestAnimationFrame(glassFrame);
+  };
+  const syncSearchGlass = () => { if (!glassRaf) glassRaf = requestAnimationFrame(glassFrame); };
+  addEventListener('focusin', syncSearchGlass, true);
+  addEventListener('input', syncSearchGlass, true);
+
   // YTM's sidebar column on screen now: the guide whose primary section (Home / Explore / Library) is visible at the
   // left edge. YTM keeps two (expanded and mini) and can leave one "visible" off-screen, so it is checked by place.
   const activeGuide = () => {

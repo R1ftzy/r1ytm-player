@@ -126,6 +126,7 @@
     setVars.remove();
     posBase.remove();
     posStyle.remove();
+    searchGlass.remove();
     ['--am-hx', '--am-hw', '--am-hy', '--am-vx', '--am-vw', '--am-vy', '--am-vb', '--am-rpad'].forEach(v => bar.style.removeProperty(v));
     gFoot.remove();
     if (brandEl) brandEl.remove();
