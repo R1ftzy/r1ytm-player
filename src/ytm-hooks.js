@@ -8,7 +8,21 @@
   const q = sel => { for (const r of SCOPES) { const e = document.querySelector(`${r} ${sel}`.trim()); if (e) return e; } return null; };
   const qa = sel => { for (const r of SCOPES) { const l = document.querySelectorAll(`${r} ${sel}`.trim()); if (l.length) return [...l]; } return []; };
   const CTRL = { PlayPause: '.play-pause-button', Next: '.next-button', Previous: '.previous-button', Repeat: '.repeat', Shuffle: '.shuffle' };
-  const yt = name => q(`.ytmusicPlayerControls${name}Button button`) || q(`ytmusic-player-bar ${CTRL[name]}`) || q(CTRL[name]);
+  // a YTM element found once and used again while it is still in the page (the lookups go through up to 5 places, and
+  // the loop asks for them 4 times a second). Looked up again at least once a second anyway: after a layout change YTM
+  // can show another one while the old one stays in the page, hidden
+  const keepFound = find => {
+    let n = null, at = 0;
+    return () => {
+      const now = performance.now();
+      // "not found" is kept for that second too (some layouts have no such element: the search goes through everything)
+      if ((n && !n.isConnected) || now - at > 1000) { n = find(); at = now; }
+      return n;
+    };
+  };
+  const ytFound = {};
+  const yt = name => (ytFound[name] ||= keepFound(() =>
+    q(`.ytmusicPlayerControls${name}Button button`) || q(`ytmusic-player-bar ${CTRL[name]}`) || q(CTRL[name])))();
   const video = () => document.querySelector('video');
   /* the time of the song playing now. The <video> element's own currentTime / duration can count from an earlier
      song: YTM plays through MediaSource and can append the next song to the same stream (gapless), so the time and
@@ -71,13 +85,21 @@
     }, 250);
     console.log('[am-bar] time probe on: play a few songs in a row. Run amTimeProbe() again to stop');
   };
-  const ytLinks = () => qa('.ytmusicTrackInfoByline a, .byline a');
-  const ytLike = () =>
+  // the playing song's byline links. Never from a song row (queue, lists): those bylines are other songs' artists
+  const ROW = 'ytmusic-player-queue-item, ytmusic-responsive-list-item-renderer, ytmusic-two-row-item-renderer';
+  const ytLinks = () => {
+    for (const r of SCOPES) {
+      const l = [...document.querySelectorAll(`${r} .ytmusicTrackInfoByline a, ${r} .byline a`.trim())].filter(a => !a.closest(ROW));
+      if (l.length) return l;
+    }
+    return [];
+  };
+  const ytLike = keepFound(() =>
     q('like-button-view-model button') ||
     q('ytmusic-like-button-renderer #button-shape-like button') ||
     q('ytmusic-like-button-renderer button[aria-pressed]') ||
     // mobile / new layouts have no YTM like button at all; Better Lyrics' fullscreen controls have one (no liked state)
-    document.querySelector('#blyrics-fs-controls button[aria-label="Like"], #blyrics-fs-controls button[aria-label="Unlike"]');
+    document.querySelector('#blyrics-fs-controls button[aria-label="Like"], #blyrics-fs-controls button[aria-label="Unlike"]'));
   const isLiked = lk => !!lk && (lk.getAttribute('aria-pressed') === 'true' ||
     (lk.closest('ytmusic-like-button-renderer') || {getAttribute: () => ''}).getAttribute('like-status') === 'LIKE');
   // YTM keyboard shortcuts, used when a button can't be found (Shift+N / Shift+P = next / previous)
@@ -165,6 +187,14 @@
     const n = document.querySelector('ytmusic-player[player-ui-state]') || document.querySelector('ytmusic-app-layout[player-ui-state]');
     return n ? n.getAttribute('player-ui-state') : '';
   };
+  // repeat / shuffle from YTM's store: state.queue.repeatMode ('NONE' | 'ALL' | 'ONE') and .shuffleEnabled. The same in
+  // every layout; the buttons' labels are not (in the newer layout they stay "Repeat" / "Shuffle"). null: no store
+  const ytQueueModes = () => {
+    try {
+      const st = ytStore(), qs = st && st.getState().queue;
+      return qs && typeof qs.repeatMode === 'string' ? { repeat: qs.repeatMode, shuffle: !!qs.shuffleEnabled } : null;
+    } catch { return null; }
+  };
   // YTM's Redux store (what its own buttons use to open / close the player page)
   const ytStore = () => {
     const l = layout(), a = document.querySelector('ytmusic-app');
@@ -182,9 +212,11 @@
   const OPEN_STATES = ['PLAYER_PAGE_OPEN', 'MINIPLAYER_IN_PLAYER_PAGE', 'FULLSCREEN'];
   const stateOpen = () => uiState() ? OPEN_STATES.includes(uiState()) : pageOpen();
   const tabs = () => [...document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab')];
-  const findTab = (re, idx) => tabs().find(t => re.test(t.textContent)) || tabs()[idx];
-  const tabActive = (re, idx) => {
+  const findTab = (re, idx) => { const l = tabs(); return l.find(t => re.test(t.textContent)) || l[idx]; };
+  // open: pageOpen(), when the caller has it already (it reads a style)
+  const tabActive = (re, idx, open = pageOpen()) => {
+    if (!open) return false;
     const t = findTab(re, idx);
-    return pageOpen() && !!t && t.getAttribute('aria-selected') === 'true';
+    return !!t && t.getAttribute('aria-selected') === 'true';
   };
 

@@ -97,8 +97,9 @@
     .am-btn.am-big svg { width: calc(30px * var(--am-s, 1)); height: calc(30px * var(--am-s, 1)); fill: rgb(255 255 255 / .9); }
     .am-btn.am-mode svg { width: calc(16px * var(--am-s, 1)); height: calc(16px * var(--am-s, 1)); fill: rgb(255 255 255 / .45); }
     .am-btn.am-on svg { fill: #fa586a; }
-    .am-btn.am-one::after { content: "1"; position: absolute; right: 4px; bottom: 4px;
-      font: 700 8px/1 system-ui; color: #fa586a; }
+    /* repeat one: the 1 in the middle of the loop icon (the button is the icon's box, the icon is centered in it) */
+    .am-btn.am-one::after { content: "1"; position: absolute; left: 50%; top: 50%; translate: -50% -48%;
+      font: 800 calc(7.5px * var(--am-s, 1))/1 system-ui; color: #fa586a; pointer-events: none; }
     .am-btn.am-open { background: rgb(255 255 255 / .14); }
 
     /* "more" menu; YTM's own dropdown stays invisible while we use it to run an action */
@@ -112,10 +113,15 @@
       backdrop-filter: blur(var(--am-menu-blur, 40px)) saturate(190%); -webkit-backdrop-filter: blur(var(--am-menu-blur, 40px)) saturate(190%);
       border: 1px solid rgb(255 255 255 / .12);
       box-shadow: 0 18px 50px rgb(0 0 0 / .45), 0 2px 8px rgb(0 0 0 / .25), inset 0 1px 0 rgb(255 255 255 / .07);
-      animation: am-menu-in .22s cubic-bezier(.2, .9, .25, 1.05); }
+      animation: am-menu-in .2s cubic-bezier(.2, .8, .2, 1); }
     .am-menu::-webkit-scrollbar { display: none; }
-    .am-menu.am-menu-out { opacity: 0; scale: .97; pointer-events: none; transition: opacity .14s ease, scale .14s ease; }
-    @keyframes am-menu-in { from { opacity: 0; scale: .92; translate: 0 6px; } to { opacity: 1; scale: 1; translate: 0 0; } }
+    /* in and out: a fade and a short slide, no scale. A blurred glass panel that changes size has its blur worked out
+       again on every frame (and its text drawn again); moved, it is only put in another place. Like the settings panel */
+    .am-menu.am-menu-down { animation-name: am-menu-in-down; }
+    .am-menu.am-menu-out { opacity: 0; translate: 0 4px; pointer-events: none; transition: opacity .14s ease, translate .14s ease; }
+    .am-menu.am-menu-down.am-menu-out { translate: 0 -4px; }
+    @keyframes am-menu-in { from { opacity: 0; translate: 0 8px; } }
+    @keyframes am-menu-in-down { from { opacity: 0; translate: 0 -8px; } }
 
     .am-menu-head { display: flex; align-items: center; gap: 11px; padding: 6px 8px 10px; }
     .am-menu-art { width: calc(42px * var(--am-ms)); height: calc(42px * var(--am-ms)); border-radius: 8px; object-fit: cover; flex-shrink: 0;

@@ -61,6 +61,7 @@
     { id: 'autoHide', label: 'Auto-hide on / off', def: '', flip: 'autoHide', run: flipSetting('autoHide', 'Auto-hide') },
     { id: 'peek', label: 'Up-next peek on / off', def: '', flip: 'peek', run: flipSetting('peek', 'Up-next peek') },
     { id: 'refract', label: 'Refraction on / off', def: '', flip: 'refract', run: () => canRefract ? flipSetting('refract', 'Refraction')() : toast('Refraction needs Chrome, Edge or Brave') },
+    { id: 'anim', label: 'Animations on / off', def: '', flip: 'anim', run: flipSetting('anim', 'Animations') },
     { id: 'artCircle', label: 'Art circle on / off', def: 'Alt+Shift+KeyA', flip: 'artCircle', run: flipSetting('artCircle', 'Art circle') },
     { id: 'hqArt', label: 'High-quality art on / off', def: '', flip: 'hqArt', run: flipSetting('hqArt', 'High-quality art', () => syncHqArt()) },
     { id: 'vinyl', label: 'Vinyl on / off', def: 'Alt+Shift+KeyV', flip: 'vinyl', run: flipSetting('vinyl', 'Vinyl') },
@@ -109,7 +110,9 @@
     e.preventDefault();
     e.stopPropagation();
     if (e.repeat && !/^vol|faster|slower/.test(a.id)) return;
+    perfClick('key ' + a.id);
     a.run();
+    kickState();
   }, true);
 
   /* the Shortcuts page of the settings (built by openSettings, after Font / Background); returns a redraw function */
@@ -200,7 +203,7 @@
     if (p.contains(document.activeElement)) document.activeElement.blur();
     p.inert = true;
     p.classList.add('am-pal-out');
-    setTimeout(() => p.remove(), 140);
+    setTimeout(() => p.remove(), dur(140));
   };
   const openPalette = () => {
     if (palEl) { closePalette(); return; }
@@ -233,7 +236,7 @@
       });
     };
     const mark = () => [...list.children].forEach((r, i) => r.classList.toggle('am-kb', i === sel));
-    const run = c => { closePalette(); c.run(); };
+    const run = c => { closePalette(); c.run(); kickState(); };
     input.addEventListener('input', () => { sel = 0; render(); });
     back.addEventListener('keydown', e => {
       e.stopPropagation();                             // no YTM hotkeys while typing here

@@ -7,7 +7,15 @@
   const AUTOHIDE_EDGE = 10;                   // px from the window's edge on the bar's side
   const AUTOHIDE_SONG_MS = 3000;              // shown this long when a new song starts
   let ahPointer = null, ahAwakeUntil = 0, ahRect = null, ahTitle = '';
-  addEventListener('pointermove', e => { ahPointer = { x: e.clientX, y: e.clientY }; }, { passive: true, capture: true });
+  let ahMoveRaf = 0;
+  addEventListener('pointermove', e => {
+    ahPointer = { x: e.clientX, y: e.clientY };
+    // hidden and the pointer came near: back now, not on the next tick (once a frame at most). Hiding stays on the loop
+    if (!ahMoveRaf && bar.classList.contains('am-autohid')) ahMoveRaf = requestAnimationFrame(() => {
+      ahMoveRaf = 0;
+      if (bar.classList.contains('am-autohid') && ahNear()) syncAutoHide();
+    });
+  }, { passive: true, capture: true });
   document.documentElement.addEventListener('pointerleave', () => { ahPointer = null; });
   // show the bar now (a shortcut, a song change); it hides again after the delay
   const revealBar = (ms = AUTOHIDE_SONG_MS) => { ahAwakeUntil = Math.max(ahAwakeUntil, performance.now() + ms); };

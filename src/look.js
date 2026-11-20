@@ -98,7 +98,9 @@
   const bgLayer = el('div', 'am-bg', document.body);
   const bgImg = el('div', 'am-bg-img', bgLayer);
   let bgUrl = null, bgRun = 0;
-  const cleared = new Set();
+  // elements made see-through by sweepBg, held weakly: a page YTM has thrown away can be freed. One it keeps (to show
+  // again) is still alive, so restoreCleared still puts it back
+  let cleared = new WeakSet(), clearedRefs = [];
   // which kind of page is showing (from the address; the player page wins while it is open)
   const PAGES = [['home', 'Home'], ['explore', 'Explore'], ['library', 'Library'], ['album', 'Albums'],
     ['playlist', 'Playlists'], ['artist', 'Artists'], ['search', 'Search'], ['player', 'Player page']];
@@ -120,14 +122,81 @@
   const dimFor = k => { const v = (look.dimPages || {})[k]; return Number.isFinite(v) ? v : look.bgDim; };
   const blurFor = k => { const v = (look.blurPages || {})[k]; return Number.isFinite(v) ? v : look.bgBlur; };
   const applyBanner = () => html.classList.toggle('am-hide-banner', !!look.hideBanner);
+  /* The blurred background, drawn once per blur on a canvas the size of the window (kept for the last BG_KEEP blurs),
+     so nothing is blurred while YTM is in use. Another page with another blur fades from one canvas to the other
+     (opacity only); before, the blur itself changed over .35 s on a layer larger than the window, worked out again on
+     every frame, and it stayed on that layer all the time. A browser without canvas filters keeps the CSS blur on
+     .am-bg-img (html class am-bg-css).
+     The picture covers the window plus twice the blur on each side (as the CSS version did), so the blur doesn't
+     darken the edges. Drawn at the screen's pixels when sharp, at 1x or half size when blurred (the blur hides it). */
+  const BG_KEEP = 4, BG_DRAW_GAP_MS = 120;
+  const canBgCanvas = (() => { try { return 'filter' in document.createElement('canvas').getContext('2d'); } catch { return false; } })();
+  let bgPic = null, bgSize = '', bgShownBlur = null, bgDrawAt = 0, bgDrawT = 0;
+  const bgCanvases = new Map();             // blur -> canvas, for the current picture and window size
+  const bgCanvasFor = blur => {
+    const key = blur + '';
+    if (bgCanvases.has(key)) { const c = bgCanvases.get(key); bgCanvases.delete(key); bgCanvases.set(key, c); return c; }
+    const W = innerWidth, H = innerHeight, k = blur === 0 ? Math.min(devicePixelRatio || 1, 2) : blur < 8 ? 1 : 0.5;
+    const c = el('canvas', 'am-bg-cv');
+    c.width = Math.max(1, Math.round(W * k)); c.height = Math.max(1, Math.round(H * k));
+    const ctx = c.getContext('2d');
+    if (blur) ctx.filter = `blur(${(blur * k).toFixed(2)}px)`;
+    // cover the window grown by 2 x blur on each side
+    const bw = W + 4 * blur, bh = H + 4 * blur, iw = bgPic.naturalWidth, ih = bgPic.naturalHeight;
+    const s = Math.max(bw / iw, bh / ih), dw = iw * s, dh = ih * s;
+    ctx.drawImage(bgPic, (W / 2 - dw / 2) * k, (H / 2 - dh / 2) * k, dw * k, dh * k);
+    bgCanvases.set(key, c);
+    while (bgCanvases.size > BG_KEEP) bgCanvases.delete(bgCanvases.keys().next().value);
+    return c;
+  };
+  // show the canvas for this blur, faded in over the one showing (drawn at most every BG_DRAW_GAP_MS while a slider moves)
+  const showBgBlur = (blur, now) => {
+    if (!canBgCanvas || !bgPic) return;
+    const size = innerWidth + 'x' + innerHeight;
+    if (size !== bgSize) { bgSize = size; bgCanvases.clear(); bgShownBlur = null; }
+    if (blur === bgShownBlur) return;
+    if (!now && !bgCanvases.has(blur + '') && performance.now() - bgDrawAt < BG_DRAW_GAP_MS) {
+      clearTimeout(bgDrawT);
+      bgDrawT = setTimeout(applyBgVars, BG_DRAW_GAP_MS);
+      return;
+    }
+    if (!bgCanvases.has(blur + '')) bgDrawAt = performance.now();
+    const c = bgCanvasFor(blur);
+    bgShownBlur = blur;
+    for (const o of bgLayer.querySelectorAll('.am-bg-cv.am-on')) if (o !== c) o.classList.remove('am-on');
+    bgLayer.append(c);                                   // on top (and before the dim), so it fades in over the old one
+    // two frames: drawn see-through first, so the fade runs
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (bgShownBlur === blur) c.classList.add('am-on'); }));
+    // the ones not showing leave the page once the fade is done (kept in the Map for later)
+    setTimeout(() => { for (const o of bgLayer.querySelectorAll('.am-bg-cv:not(.am-on)')) if (o !== c || bgShownBlur !== blur) o.remove(); }, dur(450));
+  };
+  // the picture changed (applyBg): loaded, then drawn
+  let bgPicRun = 0;
+  const setBgPic = url => {
+    const run = ++bgPicRun;
+    bgCanvases.clear(); bgShownBlur = null; bgPic = null;
+    bgLayer.querySelectorAll('.am-bg-cv').forEach(c => c.remove());
+    if (!url || !canBgCanvas) return;
+    const im = new Image();
+    im.onload = () => { if (run !== bgPicRun) return; bgPic = im; applyBgVars(); };
+    im.src = url;
+  };
+  addEventListener('resize', () => { clearTimeout(bgDrawT); bgDrawT = setTimeout(() => { if (bgPic) { bgSize = ''; applyBgVars(); } }, 200); });
+  html.classList.toggle('am-bg-css', !canBgCanvas);
   const applyBgVars = () => {
     // on the background layer itself, not <html> (see setVars in the settings): a Dim / Blur drag restyles only it
+    const blur = look.bg === 'color' ? 0 : blurFor(curPage);
     bgLayer.style.setProperty('--am-bg-dim', String(look.bg === 'color' ? 0 : dimFor(curPage) / 100));
-    bgLayer.style.setProperty('--am-bg-blur', (look.bg === 'color' ? 0 : blurFor(curPage)) + 'px');
+    bgLayer.style.setProperty('--am-bg-blur', blur + 'px');
+    showBgBlur(blur);
   };
   const restoreCleared = () => {
-    for (const n of cleared) { n.style.removeProperty('background-color'); n.style.removeProperty('box-shadow'); }
-    cleared.clear();
+    for (const ref of clearedRefs) {
+      const n = ref.deref();
+      if (n) { n.style.removeProperty('background-color'); n.style.removeProperty('box-shadow'); }
+    }
+    cleared = new WeakSet();
+    clearedRefs = [];
   };
   const darkOpaque = c => {
     const n = /^rgba?\(/.test(c) && c.match(/[\d.]+/g);
@@ -152,15 +221,23 @@
   };
   let pfpEl = null;
   const shaded = new Set();
+  // header elements already checked (hit or not): not measured again each second. One under 300 px wide isn't marked,
+  // it may still grow. Forgotten when the header or the setting changes (clearShade)
+  let shadeChecked = new WeakSet(), shadeHeader = null, shadeCalls = 0;
   const clearShade = () => {
     for (const n of shaded) { n.classList.remove('am-noshade'); n.style.removeProperty('background-color'); }
     shaded.clear();
+    shadeChecked = new WeakSet();
   };
   const syncArtist = () => {
     const onArtist = curPage === 'artist';
     const h = onArtist && artistHeader();
     // profile picture above the name
-    const wantPic = h && (look.artistHead === 'picture' || look.artistHead === 'both');
+    // not when the header has a picture of its own: YouTube channels (YTM's "visual" header) show one, music artists
+    // (the "immersive" header) don't
+    const ownPic = h && [...h.querySelectorAll('ytmusic-thumbnail-renderer img, ytmusic-thumbnail-renderer yt-img-shadow')]
+      .some(n => n.getClientRects().length > 0);
+    const wantPic = h && !ownPic && (look.artistHead === 'picture' || look.artistHead === 'both');
     const titleEl = wantPic && (h.querySelector('h1') || h.querySelector('.title'));
     const src = titleEl && artistPicture(h);
     if (src) {
@@ -170,9 +247,14 @@
     } else if (pfpEl) { pfpEl.remove(); pfpEl = null; }
     // shadow: gradients and dark see-through fills on the header's big parts (not its buttons)
     if (!h || !look.noArtistShade) { if (shaded.size) clearShade(); return; }
+    // a new header, and every 10th call (once a second): checked again, for a gradient YTM added after the first look
+    shadeCalls++;
+    if (h !== shadeHeader || shadeCalls % 10 === 0) { shadeHeader = h; shadeChecked = new WeakSet(); }
     for (const n of [h, ...h.querySelectorAll('*')]) {
-      if (shaded.has(n) || n === pfpEl || n.closest('button, a, yt-button-shape, yt-button-renderer, ytmusic-subscribe-button-renderer, svg')) continue;
+      if (shadeChecked.has(n) || n === pfpEl) continue;
+      if (n.closest('button, a, yt-button-shape, yt-button-renderer, ytmusic-subscribe-button-renderer, svg')) { shadeChecked.add(n); continue; }
       if (n.getBoundingClientRect().width < 300) continue;
+      shadeChecked.add(n);
       let hit = false;
       for (const ps of [null, '::before', '::after']) {
         const bi = getComputedStyle(n, ps).backgroundImage;
@@ -192,6 +274,7 @@
   // Measured instead of a fixed selector list because YTM's layouts differ between accounts.
   const sweepBg = () => {
     if (look.bg === 'default') return;
+    if (clearedRefs.length > 200) clearedRefs = clearedRefs.filter(r => r.deref());   // the freed ones
     const seen = new Set();
     for (const fx of [0.02, 0.3, 0.6, 0.98]) for (const fy of [0.04, 0.5, 0.92]) {
       for (const n of document.elementsFromPoint(innerWidth * fx, innerHeight * fy)) {
@@ -214,7 +297,7 @@
           n.style.setProperty('box-shadow', 'none', 'important');
           hit = true;
         }
-        if (hit) cleared.add(n);
+        if (hit) { cleared.add(n); clearedRefs.push(new WeakRef(n)); }
       }
     }
   };
@@ -254,6 +337,7 @@
     if (bgUrl) URL.revokeObjectURL(bgUrl);
     bgUrl = blob ? URL.createObjectURL(blob) : null;
     bgImg.style.backgroundImage = bgUrl ? `url("${bgUrl}")` : 'none';
+    setBgPic(bgUrl);
     bgLayer.style.backgroundColor = look.bg === 'color' ? look.bgColor : '#000';
     applyBgVars();
     html.classList.toggle('am-bg-on', look.bg !== 'default');

@@ -36,15 +36,21 @@
     const img = [...row.querySelectorAll('img')].find(i => /^https?:/.test(i.src));
     return { title: txt('.title, .song-title, h1, h2'), sub: txt('.secondary-flex-columns, .subtitle, .byline, .strapline'), img: img ? img.src : '' };
   };
-  // read a menu's items (label + a copy of YTM's icon) by opening it invisibly
-  const readYtMenu = opener => withYtMenu(async () => {
-    const items = await openYtMenu(opener);
-    const out = items && items.map(x => {
-      const s = [...x.n.querySelectorAll('yt-icon svg')].find(shown);
-      return { label: x.label, svg: s ? s.cloneNode(true) : null };
+  // read a menu's items (label + a copy of YTM's icon) by opening it invisibly. The items come back as soon as they are
+  // read, so our popup shows while YTM's menu is still closing; the lock (and so the hidden-menu style) is kept until
+  // it has closed, so the next action waits for that
+  const readYtMenu = opener => new Promise(resolve => {
+    withYtMenu(async () => {
+      let out = null;
+      try {
+        const items = await openYtMenu(opener);
+        out = items && items.map(x => {
+          const s = [...x.n.querySelectorAll('yt-icon svg')].find(shown);
+          return { label: x.label, svg: s ? s.cloneNode(true) : null };
+        });
+      } finally { resolve(out); }
+      await closeYtMenu();
     });
-    await closeYtMenu();
-    return out;
   });
 
   let genToken = 0;
@@ -75,6 +81,7 @@
       const minX = e && e.side === 'left' ? e.at + 10 : 8, maxX = e && e.side === 'right' ? e.at - 10 : innerWidth - 8;
       m.style.left = Math.max(minX, Math.min(maxX - r.width, left)) + 'px';
       m.style.transformOrigin = `${t.type === 'click' ? '100%' : '0'} ${down ? '0' : '100%'}`;
+      m.classList.toggle('am-menu-down', down);           // it slides in from the button's side
     };
     const model = genModel(items, opener);
     const target = menuTarget(t.el);                      // share.js: our "Copy link" first in the first group
@@ -151,19 +158,22 @@
   }, true);
 
   // volume
-  const ytVol = () => q('.ytMusicMiniPlayerVolumePopup input[type="range"]') || q('#volume-slider input[type="range"]');
+  const ytVol = keepFound(() => q('.ytMusicMiniPlayerVolumePopup input[type="range"]') || q('#volume-slider input[type="range"]'));
   const getVolume = () => {
     const s = ytVol();
     if (s) return +s.value;
     const v = video();
     return v ? Math.round(v.volume * 100) : 100;
   };
-  const setVolume = val => {
+  // live: mid-drag. YTM's slider follows ('input') and the video's volume is set directly (as the wheel glide does);
+  // YTM saves a volume on 'change', so that is sent once, with the final value (live false: on release)
+  const setVolume = (val, live) => {
     const s = ytVol();
     if (s) {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(s, String(val));
       s.dispatchEvent(new Event('input', { bubbles: true }));
-      s.dispatchEvent(new Event('change', { bubbles: true }));
+      if (live) { const v = video(); if (v) v.volume = Math.max(0, Math.min(1, val / 100)); }
+      else s.dispatchEvent(new Event('change', { bubbles: true }));
     } else {
       const v = video();
       if (v) v.volume = val / 100;

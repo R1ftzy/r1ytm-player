@@ -229,7 +229,7 @@
       if (!kNoticeEl) return;
       kNoticeEl = null;
       back.classList.add('am-set-out');
-      setTimeout(() => back.remove(), 180);
+      setTimeout(() => back.remove(), dur(180));
       res(r);
     };
     ok.addEventListener('click', () => {

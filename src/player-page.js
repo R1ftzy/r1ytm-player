@@ -1,5 +1,7 @@
   /* ---------- smooth player page open / background fade ---------- */
-  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  // the system's "reduce motion", or animations off in the settings (motionOff, helpers.js): the instant paths
+  const reduceMotionMq = matchMedia('(prefers-reduced-motion: reduce)');
+  const reduceMotion = { get matches() { return motionOff || reduceMotionMq.matches; } };
   let lastOpen = null;
   let animatingUntil = 0;        // while the open animation runs, skip layout-heavy work
   let closingUntil = 0;          // while closing, ignore "still visible" until YTM finishes
@@ -65,11 +67,11 @@
     const pp = playerPage();
     if (!pp || reduceMotion.matches || posNow === 'bottom' || !ytmSlides(pp)) return;
     const pop = popFrames(pp, true);
-    if (pop) { animatePage(pp, pop, { duration: POP_CLOSE_MS, easing: CLOSE_EASE }, true); return; }
+    if (pop) { animatePage(pp, pop, { duration: dur(POP_CLOSE_MS), easing: CLOSE_EASE }, true); return; }
     const hold = { transform: 'none', visibility: 'visible' };
     animatePage(pp, [{ ...hold, opacity: 1, translate: '0 0', scale: '1' },
       { ...hold, opacity: 0, translate: slideFrom(), scale: '0.97' }],
-      { duration: CLOSE_MS, easing: CLOSE_EASE }, true);
+      { duration: dur(CLOSE_MS), easing: CLOSE_EASE }, true);
   };
 
   // called the moment a close is requested, so the page fades back in while the player slides away
@@ -77,6 +79,7 @@
     closingUntil = performance.now() + 2500;
     if (lastOpen) animateClose();
     circleClose();
+    vinylPage(false);
     lastOpen = false;
     setBgHidden(false);
   };
@@ -90,6 +93,7 @@
     lastOpen = open;
 
     setBgHidden(open);
+    vinylPage(open);
     if (!firstRun) { if (open) circleOpen(); else circleClose(); }   // art-circle.js (Player page > Open effect)
 
     if (firstRun || reduceMotion.matches) return;
@@ -102,13 +106,13 @@
     const theirs = ytmSlides(pp);
     const keep = theirs && posNow === 'bottom';
     const pop = !keep && popFrames(pp, false);
-    if (pop) { animatePage(pp, pop, { duration: POP_OPEN_MS, easing: ANIM_EASE }, theirs); return; }
+    if (pop) { animatePage(pp, pop, { duration: dur(POP_OPEN_MS), easing: ANIM_EASE }, theirs); return; }
     // prep layers, pause heavy work, then animate only compositor-friendly properties
     animatePage(pp,
       keep
         ? [{ opacity: 0, scale: '0.985' }, { opacity: 1, scale: '1' }]
         : [{ opacity: 0, translate: slideFrom(), scale: '0.97' }, { opacity: 1, translate: '0 0', scale: '1' }],
-      { duration: ANIM_MS, easing: ANIM_EASE }, theirs && !keep);
+      { duration: dur(ANIM_MS), easing: ANIM_EASE }, theirs && !keep);
   };
 
   const watchPage = () => {
@@ -182,7 +186,8 @@
     if (t) { console.log('[am-bar] toggle click target:', t); t.click(); }
     else console.warn('[am-bar] nothing to click to open/close the player page');
   };
-  const isMobile = () => matchMedia('(max-width: 700px)').matches;
+  const mobileMq = matchMedia('(max-width: 700px)');
+  const isMobile = () => mobileMq.matches;
   // mobile: is the lyrics / up next sheet pulled up? YTM keeps a tab "selected" even while the sheet is down, and the
   // tab strip doesn't move (measured: top 806 of 874 both ways). Down, YTM reports player-page-ui-state=FULL_PLAYER_VIEW
   // and keeps the tab content (#tab-renderer) at opacity 0 below the screen; any of these changing means "up".
@@ -201,10 +206,24 @@
   const showTab = async (re, idx) => {
     // mobile: the buttons only ever open a tab (a selected tab doesn't mean its sheet is showing)
     if (tabActive(re, idx) && !isMobile()) { togglePage(); return; }
-    if (!pageOpen()) { togglePage(); await sleep(450); }
+    let t0 = 0;
+    if (!pageOpen()) {
+      togglePage();
+      // the tab as soon as the page is open and the tab shows (this was a fixed 450 ms). A frame, or 50 ms in a
+      // background tab, where frames don't run
+      t0 = performance.now();
+      const ready = () => { const t = pageOpen() && findTab(re, idx); return !!t && t.getClientRects().length > 0; };
+      while (!ready() && performance.now() - t0 < 450) await new Promise(r => { requestAnimationFrame(r); setTimeout(r, 50); });
+    }
     const t = findTab(re, idx);
-    if (t) t.click();
-    else console.warn('[am-bar] tab not found:', re);
+    if (!t) { console.warn('[am-bar] tab not found:', re); return; }
+    t.click();
+    kickState();
+    // just opened: if YTM ignored the click while its page was still moving, once more at 450 ms (the old wait)
+    if (t0) {
+      await sleep(Math.max(0, 450 - (performance.now() - t0)));
+      if (t.isConnected && t.getAttribute('aria-selected') !== 'true') { t.click(); kickState(); }
+    }
   };
   const LYRICS = [/lyrics/i, 1];
   const UPNEXT = [/up next/i, 0];

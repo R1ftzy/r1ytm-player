@@ -153,9 +153,7 @@
       line-height: 1; letter-spacing: -.03em; }
     html.am-brand-on .am-brand { display: inline-flex; }
 
-    /* the bar's 3-dot menu opens downward: it comes in from above */
-    .am-menu.am-menu-down { animation-name: am-menu-in-down; }
-    @keyframes am-menu-in-down { from { opacity: 0; scale: .92; translate: 0 -6px; } to { opacity: 1; scale: 1; translate: 0 0; } }
+    /* the bar's 3-dot menu opens downward (bar at the top): it slides in from above (.am-menu-down, styles.js) */
   `;
   // the space for the bar under the header, rewritten only when it changes
   const posStyle = el('style', null, document.head);
@@ -212,32 +210,55 @@
   addEventListener('focusout', () => setTimeout(syncSearch, 0), true);    // focus has moved on only after the event
 
   // the glass behind YTM's search suggestions (styles.js): one box per section of suggestions (searches, then songs /
-  // artists), each a layer of its own laid over the section's place every frame while a search box is open, hidden
-  // once it closes. Kept in a holder so amOff() removes them all at once
+  // artists), each a layer of its own laid over the section's place, hidden once the list closes. Kept in a holder so
+  // amOff() removes them all at once.
+  // Measured only while something changes: after typing, focus, a scroll, a resize or a change in the search box, the
+  // boxes follow the list on every frame until it has stood still for GLASS_FRAMES frames (its open animation, new
+  // results). The loop also measures once a tick while a search box is open, in case a change was missed.
   const searchGlass = el('div', 'am-search-glasses', document.body);
-  let glassRaf = 0;
+  const GLASS_FRAMES = 12;
+  let glassRaf = 0, glassLeft = 0, glassKey = '';
   const glassFrame = () => {
     glassRaf = 0;
     const list = document.querySelector('ytmusic-search-box[opened] #suggestion-list');
     const on = !!list && getComputedStyle(list).display !== 'none' && !zenEl;
     const rects = on ? [...list.querySelectorAll('ytmusic-search-suggestions-section')]
       .map(s => s.getBoundingClientRect()).filter(r => r.height > 8) : [];
-    while (searchGlass.children.length < rects.length) el('div', 'am-search-glass', searchGlass);
-    [...searchGlass.children].forEach((g, i) => {
-      const r = rects[i];
-      g.classList.toggle('am-on', !!r);
-      if (r) Object.assign(g.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
-    });
-    if (searchActive()) glassRaf = requestAnimationFrame(glassFrame);
+    const key = rects.map(r => [r.left, r.top, r.width, r.height].map(n => n.toFixed(1)).join(',')).join('|');
+    if (key !== glassKey) {                 // moved, grew, opened or closed: written now, and followed a while longer
+      glassKey = key;
+      glassLeft = GLASS_FRAMES;
+      while (searchGlass.children.length < rects.length) el('div', 'am-search-glass', searchGlass);
+      [...searchGlass.children].forEach((g, i) => {
+        const r = rects[i];
+        g.classList.toggle('am-on', !!r);
+        if (r) Object.assign(g.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+      });
+    }
+    if (--glassLeft > 0 && (glassKey || searchActive())) glassRaf = requestAnimationFrame(glassFrame);
   };
+  const kickGlass = () => { glassLeft = GLASS_FRAMES; if (!glassRaf) glassRaf = requestAnimationFrame(glassFrame); };
+  // YTM's search box: any change in it (the list opening, new results, suggestions coming back on a second focus with
+  // no input event) starts the following
+  const glassObs = new MutationObserver(kickGlass);
+  let glassBox = null;
   // a search box open, or about to be: YTM marks it [opened] a moment after it gets focus, and on a second focus with
   // text already typed it brings the suggestions back only after that, with no input event
   const searchActive = () => !!document.querySelector('ytmusic-search-box[opened], ytmusic-search-box:focus-within');
-  // also called by the sync loop (4 times a second), so a list that opens without a focus or input event still
-  // gets its glass
-  const syncSearchGlass = () => { if (!glassRaf && searchActive()) glassRaf = requestAnimationFrame(glassFrame); };
-  addEventListener('focusin', syncSearchGlass, true);
-  addEventListener('input', syncSearchGlass, true);
+  // called by the sync loop (4 times a second): one measure while a search box is open (or its glass still shows)
+  const syncSearchGlass = () => {
+    const sb = document.querySelector('ytmusic-search-box');
+    if (sb !== glassBox) {
+      glassObs.disconnect();
+      glassBox = sb;
+      if (sb) glassObs.observe(sb, { subtree: true, childList: true, attributes: true, attributeFilter: ['opened', 'hidden', 'style'] });
+    }
+    if (!glassRaf && (glassKey || searchActive())) glassRaf = requestAnimationFrame(glassFrame);
+  };
+  addEventListener('focusin', kickGlass, true);
+  addEventListener('input', kickGlass, true);
+  addEventListener('scroll', () => { if (glassKey) kickGlass(); }, { capture: true, passive: true });
+  addEventListener('resize', () => { if (glassKey) kickGlass(); });
 
   // YTM's sidebar column on screen now: the guide whose primary section (Home / Explore / Library) is visible at the
   // left edge. YTM keeps two (expanded and mini) and can leave one "visible" off-screen, so it is checked by place.

@@ -5,7 +5,8 @@
   const btn = (parent, icon, onClick, extra) => {
     const b = el('button', 'am-btn' + (extra ? ' ' + extra : ''), parent);
     b.append(svg(P[icon]));
-    b.addEventListener('click', e => { e.stopPropagation(); onClick(b); });
+    // kickState (sync-loop.js): the bar shows YTM's new state as soon as YTM has it, not on the next tick
+    b.addEventListener('click', e => { e.stopPropagation(); perfClick(icon); onClick(b); kickState(); });
     return b;
   };
   const clickYt = name => () => {
@@ -20,7 +21,14 @@
 
   // left: transport
   const left = el('div', 'am-group am-left', bar);
-  const shuf = btn(left, 'shuffle', clickYt('Shuffle'), 'am-dim');
+  // shuffle can be a one-time reorder (no state to light up): a short press, so every click shows. A shuffle mode that
+  // stays on lights the icon as well (syncState, from YTM's store)
+  const tapIcon = b => {
+    const s = b.querySelector('svg');
+    if (s && !reduceMotion.matches) s.animate([{ scale: '1' }, { scale: '.78', offset: .35 }, { scale: '1.08', offset: .7 }, { scale: '1' }],
+      { duration: dur(320), easing: 'ease-out' });
+  };
+  const shuf = btn(left, 'shuffle', b => { clickYt('Shuffle')(); tapIcon(b); }, 'am-dim');
   btn(left, 'rew', clickYt('Previous'));
   const play = btn(left, 'play', clickYt('PlayPause'), 'am-big');
   const nextBtn = btn(left, 'ff', clickYt('Next'));

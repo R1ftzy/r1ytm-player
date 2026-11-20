@@ -172,14 +172,14 @@
     peekOn = true;
     peekDraw(peekT);
     if (reduceMotion.matches) { peekT = 1; peekDraw(1); return; }
-    peekRun(1, PEEK_OPEN_MS * (1 - peekT * .6));
+    peekRun(1, dur(PEEK_OPEN_MS * (1 - peekT * .6)));
   };
   const hidePeek = now => {
     clearTimeout(peekWait);
     if (!peekOn && peekT === 0) return;
     peekOn = false;
     if (now === true || reduceMotion.matches) { peekReset(); return; }
-    peekRun(0, PEEK_CLOSE_MS * Math.max(.4, peekT), () => { if (!peekOn) peekReset(); });
+    peekRun(0, dur(PEEK_CLOSE_MS * Math.max(.4, peekT)), () => { if (!peekOn) peekReset(); });
   };
   nextBtn.addEventListener('pointerenter', e => {
     if (e.pointerType === 'touch') return;

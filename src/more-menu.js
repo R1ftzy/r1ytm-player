@@ -38,7 +38,10 @@
   };
   const ytMenuItems = list => [...list.children].filter(n => !n.hidden && shown(n))
     .map(n => ({ n, label: ytMenuLabel(n) })).filter(x => x.label);
-  const waitYtMenuClosed = async () => { for (let i = 0; i < 30 && ytMenuList(); i++) await sleep(50); };
+  // a frame, or 50 ms where frames don't run (a background tab)
+  const nextFrame = () => new Promise(r => { requestAnimationFrame(r); setTimeout(r, 50); });
+  // YTM's menu has closed: checked each frame (this was every 50 ms), at most 1.5 s
+  const waitYtMenuClosed = async () => { const t0 = performance.now(); while (ytMenuList() && performance.now() - t0 < 1500) await nextFrame(); };
   // YTM gives focus back to its (hidden) menu button on close; drop it so Space doesn't reopen YTM's menu
   const dropYtFocus = () => {
     const a = document.activeElement;
@@ -61,20 +64,30 @@
       { bubbles: true, cancelable: true, composed: true, button: 2, clientX: t.x, clientY: t.y })));
     return true;
   };
-  // open YTM's menu and wait until its items stop changing; null if it didn't open
+  // open YTM's menu and wait until its items have settled; null if it didn't open. YTM fills the menu in steps, so the
+  // items are taken once nothing in its popups has changed for MENU_SETTLE_FRAMES frames (watched, so a late item or a
+  // label that changes resets the wait). This was "the same count 3 times, 25 ms apart": at least 75 ms more. At most
+  // 1.5 s, as before
+  const MENU_SETTLE_FRAMES = 3;
   const openYtMenu = async (opener = barOpener) => {
     if (ytMenuList()) await closeYtMenu();
-    if (!opener()) return null;
-    let list = null, count = -1, stable = 0;
-    for (let i = 0; i < 60; i++) {
-      await sleep(25);
-      list = ytMenuList();
-      if (!list) continue;
-      const c = ytMenuItems(list).length;
-      if (c && c === count) { if (++stable >= 3) break; } else { stable = 0; count = c; }
-    }
-    if (!list) console.warn('[am-bar] menu: YTM menu did not open');
-    return list ? ytMenuItems(list) : null;
+    let changed = true;
+    const obs = new MutationObserver(() => { changed = true; });
+    obs.observe(document.querySelector('ytmusic-popup-container') || document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+    try {
+      if (!opener()) return null;
+      const t0 = performance.now();
+      let list = null, stable = 0;
+      while (performance.now() - t0 < 1500) {
+        await nextFrame();
+        list = ytMenuList();
+        if (!list || !ytMenuItems(list).length) { stable = 0; continue; }
+        if (changed) { changed = false; stable = 0; continue; }
+        if (++stable >= MENU_SETTLE_FRAMES) break;
+      }
+      if (!list) console.warn('[am-bar] menu: YTM menu did not open');
+      return list ? ytMenuItems(list) : null;
+    } finally { obs.disconnect(); }
   };
   let ytLock = Promise.resolve();
   const withYtMenu = fn => {
@@ -86,6 +99,7 @@
   };
   // run one of YTM's menu actions: find its item by label and click it
   const runYtItem = (re, label, opener) => withYtMenu(async () => {
+    menuLabels = null;                      // the action may change a label (e.g. "Save to library")
     const items = await openYtMenu(opener);
     if (!items) return;
     const hit = items.find(x => re.test(x.label));
@@ -252,10 +266,35 @@
   // after the popup opens: read YTM's menu once (invisibly) to show its current wording for toggles and to dim
   // items it doesn't have for this song (e.g. "Remove from queue"). Skipped if YTM's labels don't match ours
   // (another language), so nothing gets dimmed by mistake.
-  const syncMenuWithYt = (m, all) => withYtMenu(async () => {
-    const items = await openYtMenu();
-    await closeYtMenu();
-    if (!items || menuEl !== m) return;
+  // The labels YTM had for this song are kept for MENU_LABELS_MS (so a menu opened again shows them at once, without
+  // opening YTM's menu); any action run through YTM's menu forgets them, it may have changed one.
+  // A fresh read starts after the menu's open animation: opening YTM's menu during it made it stutter.
+  const MENU_LABELS_MS = 30000;
+  let menuLabels = null;                    // { song, at, labels: [string] }
+  const songKey = () => {
+    try { const d = ytPlayer() && ytPlayer().getVideoData && ytPlayer().getVideoData(); if (d && d.video_id) return d.video_id; } catch {}
+    const md = navigator.mediaSession.metadata;
+    return md ? md.title + '|' + md.artist : '';
+  };
+  const syncMenuWithYt = (m, all) => {
+    const song = songKey();
+    if (menuLabels && menuLabels.song === song && performance.now() - menuLabels.at < MENU_LABELS_MS) {
+      applyMenuLabels(m, all, menuLabels.labels.map(label => ({ label })));
+      return;
+    }
+    setTimeout(() => {
+      if (menuEl !== m) return;
+      withYtMenu(async () => {
+        if (menuEl !== m) return;
+        const items = await openYtMenu();
+        await closeYtMenu();
+        if (!items) return;
+        if (songKey() === song) menuLabels = { song, at: performance.now(), labels: items.map(x => x.label) };
+        if (menuEl === m) applyMenuLabels(m, all, items);
+      });
+    }, dur(220));
+  };
+  const applyMenuLabels = (m, all, items) => {
     const ours = all.filter(it => it.re);
     const hits = ours.map(it => items.find(x => it.re.test(x.label)));
     if (hits.filter(Boolean).length < 3) return;
@@ -263,7 +302,7 @@
       if (hits[i]) it.labelEl.textContent = hits[i].label;
       else it.el.classList.add('am-menu-off');
     });
-  });
+  };
 
   let menuEl = null, menuAnchor = null, menuTrigger = null;   // menuTrigger: YTM's 3-dot button of an open row menu
   const menuItemOf = new WeakMap();         // our item element -> its model entry
@@ -276,7 +315,7 @@
     menuAnchor = null;
     menuTrigger = null;
     m.classList.add('am-menu-out');
-    setTimeout(() => m.remove(), 160);
+    setTimeout(() => m.remove(), dur(160));
   };
 
   // an item with keep (the speed row) runs with the menu still open; it gets the click to see which part was hit
@@ -346,7 +385,7 @@
         // beside the rail / card, its middle on the bar's middle (the bar's center line), kept on screen
         m.style.maxHeight = (innerHeight - 16) + 'px';
         document.body.append(m);
-        // the layout size: getBoundingClientRect() would give the size mid-animation (the menu opens from 92%)
+        // the layout size (offsetWidth / offsetHeight): not changed by the open animation
         const b = anchor.getBoundingClientRect(), r = { width: m.offsetWidth, height: m.offsetHeight };
         const left = posNow === 'left' ? br.right + 10 : br.left - 10 - r.width;
         const top = Math.max(8, Math.min(innerHeight - r.height - 8, br.top + br.height / 2 - r.height / 2));

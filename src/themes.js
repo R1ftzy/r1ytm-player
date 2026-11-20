@@ -120,6 +120,22 @@
     for (const k of pr.files || []) { try { await idb.set(presetFileKey(pr.id, k), null); } catch {} }
   };
 
+  // the presets' gradient previews: drawn one per frame after the panel shows, not while it is built (drawing all 6 was
+  // most of the time the panel took to open: 14-28 ms of 20-49)
+  const thQueue = [];
+  let thRaf = 0;
+  const thPreview = (c, grad) => {
+    thQueue.push([c, grad]);
+    if (!thRaf) thRaf = requestAnimationFrame(thNext);
+  };
+  const thNext = () => {
+    thRaf = 0;
+    const job = thQueue.shift();
+    if (!job) return;
+    const [c, grad] = job;
+    if (c.isConnected) { try { gmRender(c.getContext('2d'), 240, 150, paintGrad(grad, 240, 150), gradOf(grad)); } catch {} }
+    if (thQueue.length) thRaf = requestAnimationFrame(thNext);
+  };
   // the "Look" page of the settings (built by openSettings, before Font / Background)
   const buildThemeSettings = p => {
     el('div', 'am-set-group', p).textContent = 'Look';
@@ -134,7 +150,7 @@
         // the gradient itself, rendered small with the maker's engine (2x for sharp screens)
         const c = el('canvas', 'am-th-cv', pv);
         c.width = 240; c.height = 150;
-        try { gmRender(c.getContext('2d'), 240, 150, paintGrad(pr.grad, 240, 150), gradOf(pr.grad)); } catch {}
+        thPreview(c, pr.grad);
       } else if (mine && (pr.look.bg === 'image' || pr.look.bg === 'gradient')) {
         idb.get(presetFileKey(pr.id, pr.look.bg === 'image' ? 'bg-image' : 'bg-gradient')).then(b => {
           if (b) { const u = URL.createObjectURL(b); pv.style.backgroundImage = `url("${u}")`; setTimeout(() => URL.revokeObjectURL(u), 60000); }
@@ -182,10 +198,29 @@
     const an = el('div', 'am-set-note', aCard);
     an.textContent = 'Sharper art on the player page, in the queue and in lists. Uses more data';
     an.style.margin = '-4px 0 10px';
-    ui.toggle(aCard, 'Art circle', () => settings.artCircle, v => { settings.artCircle = v; saveSettings(); });
+    ui.toggle(aCard, 'Art circle', () => settings.artCircle, v => { settings.artCircle = v; saveSettings(); syncCircle(acSrc); });
     const cn = el('div', 'am-set-note', aCard);
     cn.textContent = 'Player page: the bar bounces, then the blurred art grows out of it in a circle, spins slowly and colors the whole window';
     cn.style.margin = '-4px 0 10px';
+    // animations (helpers.js: motionK, dur(), motionCss(); applySettings sets them). The speed is dimmed while they are off
+    el('div', 'am-set-subhead', p).textContent = 'Animations';
+    const mCard = el('div', 'am-set-card', p);
+    let speedRow = null, mRaf = 0;
+    const dimSpeed = () => { if (speedRow) speedRow.classList.toggle('am-set-dim', !settings.anim); };
+    // the notes go inside their rows, as the panel's own rows have them (the label and note in a text column beside the
+    // switch; under a slider), so the rows keep the panel's spacing and the line between them
+    const tRow = ui.toggle(mCard, 'Animations', () => settings.anim, v => { settings.anim = v; applySettings(); saveSettings(); dimSpeed(); });
+    const lt = el('div', 'am-set-ltext');
+    tRow.prepend(lt);
+    lt.append(tRow.querySelector('.am-set-label'));
+    el('div', 'am-set-note', lt).textContent = 'Off: menus, the player page and the bar change at once, and the spinning art stands still. Also off when your system is set to reduce motion';
+    speedRow = ui.range(mCard, 'Animation speed', 50, 300, 10, '%', () => settings.animSpeed, v => {
+      settings.animSpeed = v;
+      saveSettings();
+      if (!mRaf) mRaf = requestAnimationFrame(() => { mRaf = 0; applySettings(); });   // once a frame while dragging
+    }, v => fmtSpeed(v / 100));
+    el('div', 'am-set-note', speedRow).textContent = 'Higher is faster';
+    dimSpeed();
   };
 
   const themeStyle = el('style', null, document.head);

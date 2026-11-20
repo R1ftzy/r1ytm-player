@@ -15,6 +15,9 @@
   const CIRCLE_BOUNCE_PX = 16;                   // ...how far it goes
   const CIRCLE_GROW_MS = 900;                    // ...the circle growing until it covers the page
   const CIRCLE_BLUR = 90;                        // ...how blurred the art is (px)
+  const CIRCLE_SHRINK_MS = 650;                  // ...the circle shrinking back into the bar when the page closes
+  const CIRCLE_CATCH_MS = 380;                   // ...the bar catching it (a small push into its edge and back)
+  const CIRCLE_CATCH = 0.45;                     // ...how far, as a part of CIRCLE_BOUNCE_PX
   const CIRCLE_FADE_MS = 800;                    // ...fade to the next song's art
   const CIRCLE_SPIN_S = 40;                      // ...seconds per turn of the blurred art
   const VINYL_SPIN = [0, 40, 16, 1.8];           // vinyl: seconds per turn for the Spin choice (0 = still; 1.8 s = 33⅓ rpm)

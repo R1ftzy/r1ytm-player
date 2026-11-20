@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         r1ytm
 // @namespace    r1ytm
-// @version      1.9.8
+// @version      1.9.9
 // @description  A floating, Apple Music-style control bar for YouTube Music.
 // @match        https://music.youtube.com/*
 // @grant        none
@@ -14,7 +14,7 @@
 // Injected on https://music.youtube.com/* only.
 (() => {
   'use strict';
-  const VERSION = '1.9.8';
+  const VERSION = '1.9.9';
 
   /* ---------- settings ---------- */
   const PLAYER_PAGE_BAR_SPACE = '88px';          // space the player page keeps free for the bar until it's measured (follows the bar size)
@@ -33,6 +33,9 @@
   const CIRCLE_BOUNCE_PX = 16;                   // ...how far it goes
   const CIRCLE_GROW_MS = 900;                    // ...the circle growing until it covers the page
   const CIRCLE_BLUR = 90;                        // ...how blurred the art is (px)
+  const CIRCLE_SHRINK_MS = 650;                  // ...the circle shrinking back into the bar when the page closes
+  const CIRCLE_CATCH_MS = 380;                   // ...the bar catching it (a small push into its edge and back)
+  const CIRCLE_CATCH = 0.45;                     // ...how far, as a part of CIRCLE_BOUNCE_PX
   const CIRCLE_FADE_MS = 800;                    // ...fade to the next song's art
   const CIRCLE_SPIN_S = 40;                      // ...seconds per turn of the blurred art
   const VINYL_SPIN = [0, 40, 16, 1.8];           // vinyl: seconds per turn for the Spin choice (0 = still; 1.8 s = 33⅓ rpm)
@@ -78,8 +81,27 @@
     add('path', { d: 'M10.2 9.2v5.6L14.9 12z', class: 'am-logo-tri' });
     return s;
   };
+  /* ---------- animation speed / off (Bar & menus > Animations) ---------- */
+  // Every r1ytm animation is scaled by one factor: 1 / speed, or 0 when animations are off (applySettings() in
+  // settings-panel.js sets both). JS durations go through dur(); CSS durations through motionCss(), which every style
+  // sheet made with el() runs through (below), so a new sheet is covered without doing anything.
+  let motionK = 1, motionOff = false;
+  const dur = ms => ms * motionK;
+  // CSS: each time in a transition / animation declaration becomes calc(<time> * var(--am-k, 1)). Off: --am-k is a tiny
+  // number, not 0, so transitionend / animation end states still happen. Endless animations (the spins) keep their own
+  // speed and are paused while animations are off (--am-play).
+  const MOTION_DECL = /((?:-webkit-)?(?:transition|animation)(?:-duration|-delay)?\s*:)([^;{}]*)/g;
+  const motionCss = css => css.replace(MOTION_DECL, (all, prop, val) => /\binfinite\b/.test(val)
+    ? `${all}; animation-play-state: var(--am-play, running)`
+    : prop + val.replace(/(^|[\s,(])(\d*\.?\d+)(ms|s)\b/g, (m, pre, n, u) => `${pre}calc(${n}${u} * var(--am-k, 1))`));
+  // a <style> made by el() rewrites what is put in it, and gives back what was put in (callers compare it to skip writes)
+  const nodeText = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+  const motionStyle = e => Object.defineProperty(e, 'textContent', { configurable: true,
+    get() { return this.amRaw !== undefined ? this.amRaw : nodeText.get.call(this); },
+    set(v) { this.amRaw = String(v); nodeText.set.call(this, motionCss(this.amRaw)); } });
   const el = (tag, cls, parent) => {
     const e = document.createElement(tag);
+    if (tag === 'style') motionStyle(e);
     if (cls) e.className = cls;
     if (parent) parent.append(e);
     return e;
@@ -100,7 +122,21 @@
   const q = sel => { for (const r of SCOPES) { const e = document.querySelector(`${r} ${sel}`.trim()); if (e) return e; } return null; };
   const qa = sel => { for (const r of SCOPES) { const l = document.querySelectorAll(`${r} ${sel}`.trim()); if (l.length) return [...l]; } return []; };
   const CTRL = { PlayPause: '.play-pause-button', Next: '.next-button', Previous: '.previous-button', Repeat: '.repeat', Shuffle: '.shuffle' };
-  const yt = name => q(`.ytmusicPlayerControls${name}Button button`) || q(`ytmusic-player-bar ${CTRL[name]}`) || q(CTRL[name]);
+  // a YTM element found once and used again while it is still in the page (the lookups go through up to 5 places, and
+  // the loop asks for them 4 times a second). Looked up again at least once a second anyway: after a layout change YTM
+  // can show another one while the old one stays in the page, hidden
+  const keepFound = find => {
+    let n = null, at = 0;
+    return () => {
+      const now = performance.now();
+      // "not found" is kept for that second too (some layouts have no such element: the search goes through everything)
+      if ((n && !n.isConnected) || now - at > 1000) { n = find(); at = now; }
+      return n;
+    };
+  };
+  const ytFound = {};
+  const yt = name => (ytFound[name] ||= keepFound(() =>
+    q(`.ytmusicPlayerControls${name}Button button`) || q(`ytmusic-player-bar ${CTRL[name]}`) || q(CTRL[name])))();
   const video = () => document.querySelector('video');
   /* the time of the song playing now. The <video> element's own currentTime / duration can count from an earlier
      song: YTM plays through MediaSource and can append the next song to the same stream (gapless), so the time and
@@ -163,13 +199,21 @@
     }, 250);
     console.log('[am-bar] time probe on: play a few songs in a row. Run amTimeProbe() again to stop');
   };
-  const ytLinks = () => qa('.ytmusicTrackInfoByline a, .byline a');
-  const ytLike = () =>
+  // the playing song's byline links. Never from a song row (queue, lists): those bylines are other songs' artists
+  const ROW = 'ytmusic-player-queue-item, ytmusic-responsive-list-item-renderer, ytmusic-two-row-item-renderer';
+  const ytLinks = () => {
+    for (const r of SCOPES) {
+      const l = [...document.querySelectorAll(`${r} .ytmusicTrackInfoByline a, ${r} .byline a`.trim())].filter(a => !a.closest(ROW));
+      if (l.length) return l;
+    }
+    return [];
+  };
+  const ytLike = keepFound(() =>
     q('like-button-view-model button') ||
     q('ytmusic-like-button-renderer #button-shape-like button') ||
     q('ytmusic-like-button-renderer button[aria-pressed]') ||
     // mobile / new layouts have no YTM like button at all; Better Lyrics' fullscreen controls have one (no liked state)
-    document.querySelector('#blyrics-fs-controls button[aria-label="Like"], #blyrics-fs-controls button[aria-label="Unlike"]');
+    document.querySelector('#blyrics-fs-controls button[aria-label="Like"], #blyrics-fs-controls button[aria-label="Unlike"]'));
   const isLiked = lk => !!lk && (lk.getAttribute('aria-pressed') === 'true' ||
     (lk.closest('ytmusic-like-button-renderer') || {getAttribute: () => ''}).getAttribute('like-status') === 'LIKE');
   // YTM keyboard shortcuts, used when a button can't be found (Shift+N / Shift+P = next / previous)
@@ -257,6 +301,14 @@
     const n = document.querySelector('ytmusic-player[player-ui-state]') || document.querySelector('ytmusic-app-layout[player-ui-state]');
     return n ? n.getAttribute('player-ui-state') : '';
   };
+  // repeat / shuffle from YTM's store: state.queue.repeatMode ('NONE' | 'ALL' | 'ONE') and .shuffleEnabled. The same in
+  // every layout; the buttons' labels are not (in the newer layout they stay "Repeat" / "Shuffle"). null: no store
+  const ytQueueModes = () => {
+    try {
+      const st = ytStore(), qs = st && st.getState().queue;
+      return qs && typeof qs.repeatMode === 'string' ? { repeat: qs.repeatMode, shuffle: !!qs.shuffleEnabled } : null;
+    } catch { return null; }
+  };
   // YTM's Redux store (what its own buttons use to open / close the player page)
   const ytStore = () => {
     const l = layout(), a = document.querySelector('ytmusic-app');
@@ -274,14 +326,18 @@
   const OPEN_STATES = ['PLAYER_PAGE_OPEN', 'MINIPLAYER_IN_PLAYER_PAGE', 'FULLSCREEN'];
   const stateOpen = () => uiState() ? OPEN_STATES.includes(uiState()) : pageOpen();
   const tabs = () => [...document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab')];
-  const findTab = (re, idx) => tabs().find(t => re.test(t.textContent)) || tabs()[idx];
-  const tabActive = (re, idx) => {
+  const findTab = (re, idx) => { const l = tabs(); return l.find(t => re.test(t.textContent)) || l[idx]; };
+  // open: pageOpen(), when the caller has it already (it reads a style)
+  const tabActive = (re, idx, open = pageOpen()) => {
+    if (!open) return false;
     const t = findTab(re, idx);
-    return pageOpen() && !!t && t.getAttribute('aria-selected') === 'true';
+    return !!t && t.getAttribute('aria-selected') === 'true';
   };
 
   /* ---------- smooth player page open / background fade ---------- */
-  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  // the system's "reduce motion", or animations off in the settings (motionOff, helpers.js): the instant paths
+  const reduceMotionMq = matchMedia('(prefers-reduced-motion: reduce)');
+  const reduceMotion = { get matches() { return motionOff || reduceMotionMq.matches; } };
   let lastOpen = null;
   let animatingUntil = 0;        // while the open animation runs, skip layout-heavy work
   let closingUntil = 0;          // while closing, ignore "still visible" until YTM finishes
@@ -347,11 +403,11 @@
     const pp = playerPage();
     if (!pp || reduceMotion.matches || posNow === 'bottom' || !ytmSlides(pp)) return;
     const pop = popFrames(pp, true);
-    if (pop) { animatePage(pp, pop, { duration: POP_CLOSE_MS, easing: CLOSE_EASE }, true); return; }
+    if (pop) { animatePage(pp, pop, { duration: dur(POP_CLOSE_MS), easing: CLOSE_EASE }, true); return; }
     const hold = { transform: 'none', visibility: 'visible' };
     animatePage(pp, [{ ...hold, opacity: 1, translate: '0 0', scale: '1' },
       { ...hold, opacity: 0, translate: slideFrom(), scale: '0.97' }],
-      { duration: CLOSE_MS, easing: CLOSE_EASE }, true);
+      { duration: dur(CLOSE_MS), easing: CLOSE_EASE }, true);
   };
 
   // called the moment a close is requested, so the page fades back in while the player slides away
@@ -359,6 +415,7 @@
     closingUntil = performance.now() + 2500;
     if (lastOpen) animateClose();
     circleClose();
+    vinylPage(false);
     lastOpen = false;
     setBgHidden(false);
   };
@@ -372,6 +429,7 @@
     lastOpen = open;
 
     setBgHidden(open);
+    vinylPage(open);
     if (!firstRun) { if (open) circleOpen(); else circleClose(); }   // art-circle.js (Player page > Open effect)
 
     if (firstRun || reduceMotion.matches) return;
@@ -384,13 +442,13 @@
     const theirs = ytmSlides(pp);
     const keep = theirs && posNow === 'bottom';
     const pop = !keep && popFrames(pp, false);
-    if (pop) { animatePage(pp, pop, { duration: POP_OPEN_MS, easing: ANIM_EASE }, theirs); return; }
+    if (pop) { animatePage(pp, pop, { duration: dur(POP_OPEN_MS), easing: ANIM_EASE }, theirs); return; }
     // prep layers, pause heavy work, then animate only compositor-friendly properties
     animatePage(pp,
       keep
         ? [{ opacity: 0, scale: '0.985' }, { opacity: 1, scale: '1' }]
         : [{ opacity: 0, translate: slideFrom(), scale: '0.97' }, { opacity: 1, translate: '0 0', scale: '1' }],
-      { duration: ANIM_MS, easing: ANIM_EASE }, theirs && !keep);
+      { duration: dur(ANIM_MS), easing: ANIM_EASE }, theirs && !keep);
   };
 
   const watchPage = () => {
@@ -464,7 +522,8 @@
     if (t) { console.log('[am-bar] toggle click target:', t); t.click(); }
     else console.warn('[am-bar] nothing to click to open/close the player page');
   };
-  const isMobile = () => matchMedia('(max-width: 700px)').matches;
+  const mobileMq = matchMedia('(max-width: 700px)');
+  const isMobile = () => mobileMq.matches;
   // mobile: is the lyrics / up next sheet pulled up? YTM keeps a tab "selected" even while the sheet is down, and the
   // tab strip doesn't move (measured: top 806 of 874 both ways). Down, YTM reports player-page-ui-state=FULL_PLAYER_VIEW
   // and keeps the tab content (#tab-renderer) at opacity 0 below the screen; any of these changing means "up".
@@ -483,10 +542,24 @@
   const showTab = async (re, idx) => {
     // mobile: the buttons only ever open a tab (a selected tab doesn't mean its sheet is showing)
     if (tabActive(re, idx) && !isMobile()) { togglePage(); return; }
-    if (!pageOpen()) { togglePage(); await sleep(450); }
+    let t0 = 0;
+    if (!pageOpen()) {
+      togglePage();
+      // the tab as soon as the page is open and the tab shows (this was a fixed 450 ms). A frame, or 50 ms in a
+      // background tab, where frames don't run
+      t0 = performance.now();
+      const ready = () => { const t = pageOpen() && findTab(re, idx); return !!t && t.getClientRects().length > 0; };
+      while (!ready() && performance.now() - t0 < 450) await new Promise(r => { requestAnimationFrame(r); setTimeout(r, 50); });
+    }
     const t = findTab(re, idx);
-    if (t) t.click();
-    else console.warn('[am-bar] tab not found:', re);
+    if (!t) { console.warn('[am-bar] tab not found:', re); return; }
+    t.click();
+    kickState();
+    // just opened: if YTM ignored the click while its page was still moving, once more at 450 ms (the old wait)
+    if (t0) {
+      await sleep(Math.max(0, 450 - (performance.now() - t0)));
+      if (t.isConnected && t.getAttribute('aria-selected') !== 'true') { t.click(); kickState(); }
+    }
   };
   const LYRICS = [/lyrics/i, 1];
   const UPNEXT = [/up next/i, 0];
@@ -538,7 +611,10 @@
   };
   const ytMenuItems = list => [...list.children].filter(n => !n.hidden && shown(n))
     .map(n => ({ n, label: ytMenuLabel(n) })).filter(x => x.label);
-  const waitYtMenuClosed = async () => { for (let i = 0; i < 30 && ytMenuList(); i++) await sleep(50); };
+  // a frame, or 50 ms where frames don't run (a background tab)
+  const nextFrame = () => new Promise(r => { requestAnimationFrame(r); setTimeout(r, 50); });
+  // YTM's menu has closed: checked each frame (this was every 50 ms), at most 1.5 s
+  const waitYtMenuClosed = async () => { const t0 = performance.now(); while (ytMenuList() && performance.now() - t0 < 1500) await nextFrame(); };
   // YTM gives focus back to its (hidden) menu button on close; drop it so Space doesn't reopen YTM's menu
   const dropYtFocus = () => {
     const a = document.activeElement;
@@ -561,20 +637,30 @@
       { bubbles: true, cancelable: true, composed: true, button: 2, clientX: t.x, clientY: t.y })));
     return true;
   };
-  // open YTM's menu and wait until its items stop changing; null if it didn't open
+  // open YTM's menu and wait until its items have settled; null if it didn't open. YTM fills the menu in steps, so the
+  // items are taken once nothing in its popups has changed for MENU_SETTLE_FRAMES frames (watched, so a late item or a
+  // label that changes resets the wait). This was "the same count 3 times, 25 ms apart": at least 75 ms more. At most
+  // 1.5 s, as before
+  const MENU_SETTLE_FRAMES = 3;
   const openYtMenu = async (opener = barOpener) => {
     if (ytMenuList()) await closeYtMenu();
-    if (!opener()) return null;
-    let list = null, count = -1, stable = 0;
-    for (let i = 0; i < 60; i++) {
-      await sleep(25);
-      list = ytMenuList();
-      if (!list) continue;
-      const c = ytMenuItems(list).length;
-      if (c && c === count) { if (++stable >= 3) break; } else { stable = 0; count = c; }
-    }
-    if (!list) console.warn('[am-bar] menu: YTM menu did not open');
-    return list ? ytMenuItems(list) : null;
+    let changed = true;
+    const obs = new MutationObserver(() => { changed = true; });
+    obs.observe(document.querySelector('ytmusic-popup-container') || document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+    try {
+      if (!opener()) return null;
+      const t0 = performance.now();
+      let list = null, stable = 0;
+      while (performance.now() - t0 < 1500) {
+        await nextFrame();
+        list = ytMenuList();
+        if (!list || !ytMenuItems(list).length) { stable = 0; continue; }
+        if (changed) { changed = false; stable = 0; continue; }
+        if (++stable >= MENU_SETTLE_FRAMES) break;
+      }
+      if (!list) console.warn('[am-bar] menu: YTM menu did not open');
+      return list ? ytMenuItems(list) : null;
+    } finally { obs.disconnect(); }
   };
   let ytLock = Promise.resolve();
   const withYtMenu = fn => {
@@ -586,6 +672,7 @@
   };
   // run one of YTM's menu actions: find its item by label and click it
   const runYtItem = (re, label, opener) => withYtMenu(async () => {
+    menuLabels = null;                      // the action may change a label (e.g. "Save to library")
     const items = await openYtMenu(opener);
     if (!items) return;
     const hit = items.find(x => re.test(x.label));
@@ -752,10 +839,35 @@
   // after the popup opens: read YTM's menu once (invisibly) to show its current wording for toggles and to dim
   // items it doesn't have for this song (e.g. "Remove from queue"). Skipped if YTM's labels don't match ours
   // (another language), so nothing gets dimmed by mistake.
-  const syncMenuWithYt = (m, all) => withYtMenu(async () => {
-    const items = await openYtMenu();
-    await closeYtMenu();
-    if (!items || menuEl !== m) return;
+  // The labels YTM had for this song are kept for MENU_LABELS_MS (so a menu opened again shows them at once, without
+  // opening YTM's menu); any action run through YTM's menu forgets them, it may have changed one.
+  // A fresh read starts after the menu's open animation: opening YTM's menu during it made it stutter.
+  const MENU_LABELS_MS = 30000;
+  let menuLabels = null;                    // { song, at, labels: [string] }
+  const songKey = () => {
+    try { const d = ytPlayer() && ytPlayer().getVideoData && ytPlayer().getVideoData(); if (d && d.video_id) return d.video_id; } catch {}
+    const md = navigator.mediaSession.metadata;
+    return md ? md.title + '|' + md.artist : '';
+  };
+  const syncMenuWithYt = (m, all) => {
+    const song = songKey();
+    if (menuLabels && menuLabels.song === song && performance.now() - menuLabels.at < MENU_LABELS_MS) {
+      applyMenuLabels(m, all, menuLabels.labels.map(label => ({ label })));
+      return;
+    }
+    setTimeout(() => {
+      if (menuEl !== m) return;
+      withYtMenu(async () => {
+        if (menuEl !== m) return;
+        const items = await openYtMenu();
+        await closeYtMenu();
+        if (!items) return;
+        if (songKey() === song) menuLabels = { song, at: performance.now(), labels: items.map(x => x.label) };
+        if (menuEl === m) applyMenuLabels(m, all, items);
+      });
+    }, dur(220));
+  };
+  const applyMenuLabels = (m, all, items) => {
     const ours = all.filter(it => it.re);
     const hits = ours.map(it => items.find(x => it.re.test(x.label)));
     if (hits.filter(Boolean).length < 3) return;
@@ -763,7 +875,7 @@
       if (hits[i]) it.labelEl.textContent = hits[i].label;
       else it.el.classList.add('am-menu-off');
     });
-  });
+  };
 
   let menuEl = null, menuAnchor = null, menuTrigger = null;   // menuTrigger: YTM's 3-dot button of an open row menu
   const menuItemOf = new WeakMap();         // our item element -> its model entry
@@ -776,7 +888,7 @@
     menuAnchor = null;
     menuTrigger = null;
     m.classList.add('am-menu-out');
-    setTimeout(() => m.remove(), 160);
+    setTimeout(() => m.remove(), dur(160));
   };
 
   // an item with keep (the speed row) runs with the menu still open; it gets the click to see which part was hit
@@ -846,7 +958,7 @@
         // beside the rail / card, its middle on the bar's middle (the bar's center line), kept on screen
         m.style.maxHeight = (innerHeight - 16) + 'px';
         document.body.append(m);
-        // the layout size: getBoundingClientRect() would give the size mid-animation (the menu opens from 92%)
+        // the layout size (offsetWidth / offsetHeight): not changed by the open animation
         const b = anchor.getBoundingClientRect(), r = { width: m.offsetWidth, height: m.offsetHeight };
         const left = posNow === 'left' ? br.right + 10 : br.left - 10 - r.width;
         const top = Math.max(8, Math.min(innerHeight - r.height - 8, br.top + br.height / 2 - r.height / 2));
@@ -911,15 +1023,21 @@
     const img = [...row.querySelectorAll('img')].find(i => /^https?:/.test(i.src));
     return { title: txt('.title, .song-title, h1, h2'), sub: txt('.secondary-flex-columns, .subtitle, .byline, .strapline'), img: img ? img.src : '' };
   };
-  // read a menu's items (label + a copy of YTM's icon) by opening it invisibly
-  const readYtMenu = opener => withYtMenu(async () => {
-    const items = await openYtMenu(opener);
-    const out = items && items.map(x => {
-      const s = [...x.n.querySelectorAll('yt-icon svg')].find(shown);
-      return { label: x.label, svg: s ? s.cloneNode(true) : null };
+  // read a menu's items (label + a copy of YTM's icon) by opening it invisibly. The items come back as soon as they are
+  // read, so our popup shows while YTM's menu is still closing; the lock (and so the hidden-menu style) is kept until
+  // it has closed, so the next action waits for that
+  const readYtMenu = opener => new Promise(resolve => {
+    withYtMenu(async () => {
+      let out = null;
+      try {
+        const items = await openYtMenu(opener);
+        out = items && items.map(x => {
+          const s = [...x.n.querySelectorAll('yt-icon svg')].find(shown);
+          return { label: x.label, svg: s ? s.cloneNode(true) : null };
+        });
+      } finally { resolve(out); }
+      await closeYtMenu();
     });
-    await closeYtMenu();
-    return out;
   });
 
   let genToken = 0;
@@ -950,6 +1068,7 @@
       const minX = e && e.side === 'left' ? e.at + 10 : 8, maxX = e && e.side === 'right' ? e.at - 10 : innerWidth - 8;
       m.style.left = Math.max(minX, Math.min(maxX - r.width, left)) + 'px';
       m.style.transformOrigin = `${t.type === 'click' ? '100%' : '0'} ${down ? '0' : '100%'}`;
+      m.classList.toggle('am-menu-down', down);           // it slides in from the button's side
     };
     const model = genModel(items, opener);
     const target = menuTarget(t.el);                      // share.js: our "Copy link" first in the first group
@@ -1026,19 +1145,22 @@
   }, true);
 
   // volume
-  const ytVol = () => q('.ytMusicMiniPlayerVolumePopup input[type="range"]') || q('#volume-slider input[type="range"]');
+  const ytVol = keepFound(() => q('.ytMusicMiniPlayerVolumePopup input[type="range"]') || q('#volume-slider input[type="range"]'));
   const getVolume = () => {
     const s = ytVol();
     if (s) return +s.value;
     const v = video();
     return v ? Math.round(v.volume * 100) : 100;
   };
-  const setVolume = val => {
+  // live: mid-drag. YTM's slider follows ('input') and the video's volume is set directly (as the wheel glide does);
+  // YTM saves a volume on 'change', so that is sent once, with the final value (live false: on release)
+  const setVolume = (val, live) => {
     const s = ytVol();
     if (s) {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(s, String(val));
       s.dispatchEvent(new Event('input', { bubbles: true }));
-      s.dispatchEvent(new Event('change', { bubbles: true }));
+      if (live) { const v = video(); if (v) v.volume = Math.max(0, Math.min(1, val / 100)); }
+      else s.dispatchEvent(new Event('change', { bubbles: true }));
     } else {
       const v = video();
       if (v) v.volume = val / 100;
@@ -1048,15 +1170,23 @@
   };
 
   /* ---------- hide YTM's bar, gray strip, reserved space ---------- */
+  // These run every tick, but a property is only written when the element's inline style doesn't already have it: a
+  // write, even of the same value, can make Firefox restyle everything under the element (for ytmusic-app: all of YTM,
+  // about 10 ms a tick), and the next style read pays for it. Reading n.style never makes the browser restyle.
+  // `check`: the longhand to compare when `prop` is a shorthand.
+  const setImportant = (n, prop, val, check = prop) => {
+    if (n.style.getPropertyValue(check) !== val || n.style.getPropertyPriority(check) !== 'important') n.style.setProperty(prop, val, 'important');
+  };
   const hideNode = n => {
-    n.style.setProperty('opacity', '0', 'important');
-    n.style.setProperty('pointer-events', 'none', 'important');
+    setImportant(n, 'opacity', '0');
+    setImportant(n, 'pointer-events', 'none');
   };
   const clearBg = n => {
-    n.style.setProperty('background', 'transparent', 'important');
-    n.style.setProperty('box-shadow', 'none', 'important');
-    n.style.setProperty('border-color', 'transparent', 'important');
+    setImportant(n, 'background', 'transparent', 'background-color');
+    setImportant(n, 'box-shadow', 'none');
+    setImportant(n, 'border-color', 'transparent', 'border-top-color');
   };
+  const setBarHeight = (n, v) => setImportant(n, '--ytmusic-player-bar-height', v);
   const isOpaque = c => c && c !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(c);
 
   const hideBase = () => {
@@ -1064,17 +1194,20 @@
     document.documentElement.classList.toggle('am-fs', fs);
 
     // normal pages: no reserved space, content scrolls under the floating bar
-    for (const n of document.querySelectorAll('ytmusic-app, ytmusic-app-layout')) {
-      n.style.setProperty('--ytmusic-player-bar-height', '0px', 'important');
-    }
+    // the bar's size is read before anything is written (a read after a write makes the browser lay the page out again)
+    const bh = bar.offsetHeight;
+    for (const n of document.querySelectorAll('ytmusic-app, ytmusic-app-layout')) setBarHeight(n, '0px');
     // player page: keep YTM's own bottom space so its layout stays aligned (none in fullscreen, none with the bar at
     // the top: placeBar() gives it space at the start instead)
     const pp = playerPage();
-    const space = bar.offsetHeight ? (bar.offsetHeight + (settings.barFloat ? 28 : 0)) + 'px' : PLAYER_PAGE_BAR_SPACE;   // bar + its margins
-    if (pp) pp.style.setProperty('--ytmusic-player-bar-height', fs || posNow !== 'bottom' ? '0px' : space, 'important');
+    const space = bh ? (bh + (settings.barFloat ? 28 : 0)) + 'px' : PLAYER_PAGE_BAR_SPACE;   // bar + its margins
+    if (pp) setBarHeight(pp, fs || posNow !== 'bottom' ? '0px' : space);
 
     document.querySelectorAll(`${MINI}, ytmusic-player-bar, #player-bar-background`).forEach(hideNode);
 
+    // a gray strip along the bottom (hit-tested, which is slow): only when page scans are due (sync-loop.js: every tick
+    // for a moment after the page changed, else every 2 s)
+    if (!scanDue()) return;
     const y = innerHeight - 20;
     for (const x of [40, innerWidth - 40]) {
       for (const n of document.elementsFromPoint(x, y)) {
@@ -1187,8 +1320,9 @@
     .am-btn.am-big svg { width: calc(30px * var(--am-s, 1)); height: calc(30px * var(--am-s, 1)); fill: rgb(255 255 255 / .9); }
     .am-btn.am-mode svg { width: calc(16px * var(--am-s, 1)); height: calc(16px * var(--am-s, 1)); fill: rgb(255 255 255 / .45); }
     .am-btn.am-on svg { fill: #fa586a; }
-    .am-btn.am-one::after { content: "1"; position: absolute; right: 4px; bottom: 4px;
-      font: 700 8px/1 system-ui; color: #fa586a; }
+    /* repeat one: the 1 in the middle of the loop icon (the button is the icon's box, the icon is centered in it) */
+    .am-btn.am-one::after { content: "1"; position: absolute; left: 50%; top: 50%; translate: -50% -48%;
+      font: 800 calc(7.5px * var(--am-s, 1))/1 system-ui; color: #fa586a; pointer-events: none; }
     .am-btn.am-open { background: rgb(255 255 255 / .14); }
 
     /* "more" menu; YTM's own dropdown stays invisible while we use it to run an action */
@@ -1202,10 +1336,15 @@
       backdrop-filter: blur(var(--am-menu-blur, 40px)) saturate(190%); -webkit-backdrop-filter: blur(var(--am-menu-blur, 40px)) saturate(190%);
       border: 1px solid rgb(255 255 255 / .12);
       box-shadow: 0 18px 50px rgb(0 0 0 / .45), 0 2px 8px rgb(0 0 0 / .25), inset 0 1px 0 rgb(255 255 255 / .07);
-      animation: am-menu-in .22s cubic-bezier(.2, .9, .25, 1.05); }
+      animation: am-menu-in .2s cubic-bezier(.2, .8, .2, 1); }
     .am-menu::-webkit-scrollbar { display: none; }
-    .am-menu.am-menu-out { opacity: 0; scale: .97; pointer-events: none; transition: opacity .14s ease, scale .14s ease; }
-    @keyframes am-menu-in { from { opacity: 0; scale: .92; translate: 0 6px; } to { opacity: 1; scale: 1; translate: 0 0; } }
+    /* in and out: a fade and a short slide, no scale. A blurred glass panel that changes size has its blur worked out
+       again on every frame (and its text drawn again); moved, it is only put in another place. Like the settings panel */
+    .am-menu.am-menu-down { animation-name: am-menu-in-down; }
+    .am-menu.am-menu-out { opacity: 0; translate: 0 4px; pointer-events: none; transition: opacity .14s ease, translate .14s ease; }
+    .am-menu.am-menu-down.am-menu-out { translate: 0 -4px; }
+    @keyframes am-menu-in { from { opacity: 0; translate: 0 8px; } }
+    @keyframes am-menu-in-down { from { opacity: 0; translate: 0 -8px; } }
 
     .am-menu-head { display: flex; align-items: center; gap: 11px; padding: 6px 8px 10px; }
     .am-menu-art { width: calc(42px * var(--am-ms)); height: calc(42px * var(--am-ms)); border-radius: 8px; object-fit: cover; flex-shrink: 0;
@@ -1386,7 +1525,8 @@
   const btn = (parent, icon, onClick, extra) => {
     const b = el('button', 'am-btn' + (extra ? ' ' + extra : ''), parent);
     b.append(svg(P[icon]));
-    b.addEventListener('click', e => { e.stopPropagation(); onClick(b); });
+    // kickState (sync-loop.js): the bar shows YTM's new state as soon as YTM has it, not on the next tick
+    b.addEventListener('click', e => { e.stopPropagation(); perfClick(icon); onClick(b); kickState(); });
     return b;
   };
   const clickYt = name => () => {
@@ -1401,7 +1541,14 @@
 
   // left: transport
   const left = el('div', 'am-group am-left', bar);
-  const shuf = btn(left, 'shuffle', clickYt('Shuffle'), 'am-dim');
+  // shuffle can be a one-time reorder (no state to light up): a short press, so every click shows. A shuffle mode that
+  // stays on lights the icon as well (syncState, from YTM's store)
+  const tapIcon = b => {
+    const s = b.querySelector('svg');
+    if (s && !reduceMotion.matches) s.animate([{ scale: '1' }, { scale: '.78', offset: .35 }, { scale: '1.08', offset: .7 }, { scale: '1' }],
+      { duration: dur(320), easing: 'ease-out' });
+  };
+  const shuf = btn(left, 'shuffle', b => { clickYt('Shuffle')(); tapIcon(b); }, 'am-dim');
   btn(left, 'rew', clickYt('Previous'));
   const play = btn(left, 'play', clickYt('PlayPause'), 'am-big');
   const nextBtn = btn(left, 'ff', clickYt('Next'));
@@ -1489,8 +1636,13 @@
     if (key === bylineKey) return;      // only rebuild when something changed
     bylineKey = key;
 
+    // YTM's byline can lag behind the song (it showed the last song's artist): links that don't match the media
+    // info's artist are not used; the plain text is shown until the byline catches up
+    const ma = (m.artist || '').trim().toLowerCase(), al = (m.album || '').trim().toLowerCase();
+    const stale = ma && links.length && !texts.some(t => { t = t.toLowerCase(); return t && t !== al && (ma.includes(t) || t.includes(ma)); });
+
     artist.replaceChildren();
-    if (!links.length) {                // fallback: plain text
+    if (!links.length || stale) {       // fallback: plain text
       artist.textContent = (m.artist || '') + (m.album ? ' | ' + m.album : '');
       albumIdx = -1;
       title.classList.remove('am-link');
@@ -1525,7 +1677,8 @@
   volRange.min = '0';
   volRange.max = '100';
   volRange.value = String(getVolume());
-  volRange.addEventListener('input', () => { setVolume(+volRange.value); showVolPct(); });
+  volRange.addEventListener('input', () => { setVolume(+volRange.value, true); showVolPct(); });
+  volRange.addEventListener('change', () => { setVolume(+volRange.value); showVolPct(); });   // let go: YTM saves it
   volRange.addEventListener('click', e => e.stopPropagation());
   // the volume in %, shown with the slider (between the slider and the button)
   const volPct = el('span', 'am-vol-pct', volWrap);
@@ -1551,7 +1704,7 @@
   const volGlide = now => {
     const dt = Math.min(64, now - volLastT);
     volLastT = now;
-    volCur += (volTarget - volCur) * (1 - Math.exp(-dt / VOL_GLIDE_MS));
+    volCur += (volTarget - volCur) * (1 - Math.exp(-dt / Math.max(.001, dur(VOL_GLIDE_MS))));
     const v = video();
     if (Math.abs(volTarget - volCur) < .05) {
       volCur = null;
@@ -1646,10 +1799,10 @@
       if (!a.width || !b.width) return;
       const dx = a.left - b.left, dy = a.top - b.top;
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-      n.animate([{ translate: `${dx}px ${dy}px` }, { translate: '0 0' }], { duration: LAYOUT_MOVE_MS, easing: LAYOUT_EASE });
+      n.animate([{ translate: `${dx}px ${dy}px` }, { translate: '0 0' }], { duration: dur(LAYOUT_MOVE_MS), easing: LAYOUT_EASE });
     });
     for (const n of [track, timeEl]) {
-      if (n.isConnected) n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: LAYOUT_MOVE_MS, easing: 'ease-out', delay: 120, fill: 'backwards' });
+      if (n.isConnected) n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: dur(LAYOUT_MOVE_MS), easing: 'ease-out', delay: dur(120), fill: 'backwards' });
     }
   };
   const syncLayoutDom = animate => {
@@ -1957,7 +2110,7 @@
     flyOn = true;
     if (!flyG || flyT === 0) flyRest();                     // reopened while closing: carry on from where it is
     if (reduceMotion.matches) { flyT = 1; flyDraw(1); return; }
-    flyRun(1, FLY_OPEN_MS * (1 - flyT * .6));
+    flyRun(1, dur(FLY_OPEN_MS * (1 - flyT * .6)));
   };
   // now === true: at once and all the way back to the bar's own look (the form is changing)
   const flyHide = now => {
@@ -1966,7 +2119,7 @@
     flyOn = false;
     if (now === true) { flyClear(); return; }
     if (reduceMotion.matches) { flyT = 0; flyRest(); return; }
-    flyRun(0, FLY_CLOSE_MS * Math.max(.4, flyT), () => { if (!flyOn) flyRest(); });
+    flyRun(0, dur(FLY_CLOSE_MS * Math.max(.4, flyT)), () => { if (!flyOn) flyRest(); });
   };
   const flyLater = () => {
     clearTimeout(flyTimer);
@@ -2037,6 +2190,10 @@
       options: [['2 s', 2], ['4 s', 4], ['8 s', 8]], min: 2, max: 8, def: 4, dep: 'autoHide' },
     { group: 'Bar & menus', sub: 'Behavior', key: 'autoHideSong', type: 'toggle', label: 'Show on a new song', min: 0, max: 1, def: 1,
       dep: 'autoHide', note: () => 'For a few seconds' },
+    // every r1ytm animation (helpers.js: motionK, dur(), motionCss()); applySettings() applies them. Shown on the Look
+    // page (themes.js), so no group here
+    { key: 'anim', type: 'toggle', label: 'Animations', min: 0, max: 1, def: 1 },
+    { key: 'animSpeed', min: 50, max: 300, def: 100 },
     // playback speed (syncSpeed below). Kept in % so the steps stay whole numbers; shown as 1.25×
     { group: 'Playback', sub: 'Speed', key: 'speed', label: 'Speed', min: 50, max: 200, step: 1, def: 100, unit: '%',
       fmt: v => fmtSpeed(v / 100) },
@@ -2113,7 +2270,7 @@
     // hqart.js: shown on the Look page (themes.js)
     { key: 'hqArt', min: 0, max: 1, def: 0 },
     // art-circle.js: the effect when the player page opens; shown on the Look page (themes.js), under Art
-    { key: 'artCircle', min: 0, max: 1, def: 0 },
+    { key: 'artCircle', min: 0, max: 1, def: 0, change: () => syncCircle(acSrc) },   // art-circle.js: at once
     // share.js: the Koutube notice was answered with "Don't show this again"
     { key: 'koutubeOk', min: 0, max: 1, def: 0 },
   ];
@@ -2160,7 +2317,12 @@
   svgEl('feComposite', { in: 'rg', in2: 'cb', operator: 'arithmetic', k1: 0, k2: 1, k3: 1, k4: 0 }, refractFilter);
   document.body.append(refractDefs);
 
-  let refractKey = '';
+  /* The map is drawn at half size (REFRACT_MAP_SCALE; the feImage stretches it, and it is a smooth gradient), which is
+     a quarter of the work. While the bar's size is changing (a transition, a slider drag) the last map is stretched to
+     the new size at once, and drawn again only once the size has held for REFRACT_SETTLE_MS: drawing it is 5-30 ms of
+     JavaScript, too much for every step. */
+  const REFRACT_MAP_SCALE = 0.5, REFRACT_SETTLE_MS = 200;
+  let refractKey = '', refractSeen = '', refractSeenAt = 0, refractTimer = 0;
   const updateRefractMap = () => {
     if (!settings.refract || !canRefract) return;
     const w = Math.round(bar.offsetWidth), h = Math.round(bar.offsetHeight);
@@ -2168,17 +2330,31 @@
     const rad = Math.min(parseFloat(getComputedStyle(bar).borderTopLeftRadius) || 0, w / 2, h / 2);
     const key = w + 'x' + h + 'r' + rad;
     if (key === refractKey) return;                     // only redraw when the bar's shape changed
+    refractMap.setAttribute('width', w);                 // the last map, stretched to the new size for now
+    refractMap.setAttribute('height', h);
+    const now = performance.now();
+    if (refractKey) {                                    // not the first map: wait until the size holds
+      if (key !== refractSeen) { refractSeen = key; refractSeenAt = now; }
+      if (now - refractSeenAt < REFRACT_SETTLE_MS) {
+        clearTimeout(refractTimer);
+        refractTimer = setTimeout(updateRefractMap, REFRACT_SETTLE_MS + 20);
+        return;
+      }
+    }
     refractKey = key;
+    const cw = Math.max(1, Math.ceil(w * REFRACT_MAP_SCALE)), ch = Math.max(1, Math.ceil(h * REFRACT_MAP_SCALE));
     const c = document.createElement('canvas');
-    c.width = w; c.height = h;
+    c.width = cw; c.height = ch;
     const ctx = c.getContext('2d');
-    const img = ctx.createImageData(w, h), d = img.data;
+    const img = ctx.createImageData(cw, ch), d = img.data;
     const edge = Math.max(8, Math.min(h * 0.6, 48));    // how far in from the rim the bending reaches
     const hw = w / 2, hh = h / 2;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
+    for (let cy = 0; cy < ch; cy++) {
+      for (let cx = 0; cx < cw; cx++) {
+        // this map pixel's center, in the bar's own pixels
+        const x = (cx + 0.5) * w / cw, y = (cy + 0.5) * h / ch;
         // distance to the rounded-rect edge and the outward normal there
-        const px = x + 0.5 - hw, py = y + 0.5 - hh;
+        const px = x - hw, py = y - hh;
         const qx = Math.abs(px) - (hw - rad), qy = Math.abs(py) - (hh - rad);
         let dist, nx, ny;
         if (qx > 0 && qy > 0) {
@@ -2191,7 +2367,7 @@
         const lx = -px / hw * 0.12, ly = -py / hh * 0.22;
         const vx = Math.max(-1, Math.min(1, -nx * f * 0.88 + lx));
         const vy = Math.max(-1, Math.min(1, -ny * f * 0.88 + ly));
-        const i = (y * w + x) * 4;
+        const i = (cy * cw + cx) * 4;
         d[i] = 128 + vx * 127;
         d[i + 1] = 128 + vy * 127;
         d[i + 2] = 128;
@@ -2199,8 +2375,6 @@
       }
     }
     ctx.putImageData(img, 0, 0);
-    refractMap.setAttribute('width', w);
-    refractMap.setAttribute('height', h);
     refractMap.setAttribute('href', c.toDataURL());
   };
   const applyRefraction = () => {
@@ -2260,7 +2434,12 @@
       const [name, value] = s.css(settings[s.key]);
       by.set(s.scope, (by.get(s.scope) || '') + `${name}: ${value}; `);
     }
-    const css = [...by].map(([sel, decl]) => `${sel} { ${decl}}`).join('\n');
+    // animations: one factor for every r1ytm duration. On :root, so YTM's own elements r1ytm animates get it too; it
+    // only changes when the setting does
+    motionOff = !settings.anim;
+    motionK = motionOff ? 0 : 100 / (settings.animSpeed || 100);
+    const css = [...by].map(([sel, decl]) => `${sel} { ${decl}}`).join('\n') +
+      `\n:root { --am-k: ${motionOff ? 0.001 : +motionK.toFixed(3)}; --am-play: ${motionOff ? 'paused' : 'running'}; }`;
     if (setVars.textContent !== css) setVars.textContent = css;
     syncSpeed();
     document.documentElement.classList.toggle('am-easy-track', !!settings.easyTrack);
@@ -2290,7 +2469,7 @@
     const s = setEl;
     setEl = null;
     s.classList.add('am-set-out');
-    setTimeout(() => s.remove(), 180);
+    setTimeout(() => s.remove(), dur(180));
   };
   const openSettings = quiet => {
     if (setEl) return;
@@ -2586,6 +2765,14 @@
     // CSS (.am-collapsed) and only sizes, font, colors and the icon-to-label gap are copied
     const collapsed = ref.hasAttribute('is-collapsed') || !!items.closest('[is-collapsed]');
     e.g.classList.toggle('am-collapsed', collapsed);
+    // copied again only when the sidebar changed: its mode, the size of YTM's entry, the font (Look), the entries in it.
+    // Copying reads YTM's computed styles after clearing ours, which made the browser restyle ~20 times each second.
+    // Every 10 s anyway, for a change this key doesn't see
+    const r = ref.getBoundingClientRect();
+    const key = [collapsed, Math.round(r.width), Math.round(r.height), look.font, look.fontScope, items.children.length].join('|');
+    e.n = (e.n || 0) + 1;                                  // calls (once a second): every 10th copies anyway
+    if (e.key === key && e.n % 10 !== 0) return;
+    e.key = key;
     for (const n of [e.g, e.item, e.icon, e.col, e.ttl]) n.style.cssText = '';     // nothing stale from the other mode
     const rItem = ref.querySelector('tp-yt-paper-item'), rIcon = ref.querySelector('yt-icon'), rTitle = ref.querySelector('.title');
     copyCss(ref, e.g, ['display', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-left', 'padding-right']);
@@ -2835,7 +3022,9 @@
   const bgLayer = el('div', 'am-bg', document.body);
   const bgImg = el('div', 'am-bg-img', bgLayer);
   let bgUrl = null, bgRun = 0;
-  const cleared = new Set();
+  // elements made see-through by sweepBg, held weakly: a page YTM has thrown away can be freed. One it keeps (to show
+  // again) is still alive, so restoreCleared still puts it back
+  let cleared = new WeakSet(), clearedRefs = [];
   // which kind of page is showing (from the address; the player page wins while it is open)
   const PAGES = [['home', 'Home'], ['explore', 'Explore'], ['library', 'Library'], ['album', 'Albums'],
     ['playlist', 'Playlists'], ['artist', 'Artists'], ['search', 'Search'], ['player', 'Player page']];
@@ -2857,14 +3046,81 @@
   const dimFor = k => { const v = (look.dimPages || {})[k]; return Number.isFinite(v) ? v : look.bgDim; };
   const blurFor = k => { const v = (look.blurPages || {})[k]; return Number.isFinite(v) ? v : look.bgBlur; };
   const applyBanner = () => html.classList.toggle('am-hide-banner', !!look.hideBanner);
+  /* The blurred background, drawn once per blur on a canvas the size of the window (kept for the last BG_KEEP blurs),
+     so nothing is blurred while YTM is in use. Another page with another blur fades from one canvas to the other
+     (opacity only); before, the blur itself changed over .35 s on a layer larger than the window, worked out again on
+     every frame, and it stayed on that layer all the time. A browser without canvas filters keeps the CSS blur on
+     .am-bg-img (html class am-bg-css).
+     The picture covers the window plus twice the blur on each side (as the CSS version did), so the blur doesn't
+     darken the edges. Drawn at the screen's pixels when sharp, at 1x or half size when blurred (the blur hides it). */
+  const BG_KEEP = 4, BG_DRAW_GAP_MS = 120;
+  const canBgCanvas = (() => { try { return 'filter' in document.createElement('canvas').getContext('2d'); } catch { return false; } })();
+  let bgPic = null, bgSize = '', bgShownBlur = null, bgDrawAt = 0, bgDrawT = 0;
+  const bgCanvases = new Map();             // blur -> canvas, for the current picture and window size
+  const bgCanvasFor = blur => {
+    const key = blur + '';
+    if (bgCanvases.has(key)) { const c = bgCanvases.get(key); bgCanvases.delete(key); bgCanvases.set(key, c); return c; }
+    const W = innerWidth, H = innerHeight, k = blur === 0 ? Math.min(devicePixelRatio || 1, 2) : blur < 8 ? 1 : 0.5;
+    const c = el('canvas', 'am-bg-cv');
+    c.width = Math.max(1, Math.round(W * k)); c.height = Math.max(1, Math.round(H * k));
+    const ctx = c.getContext('2d');
+    if (blur) ctx.filter = `blur(${(blur * k).toFixed(2)}px)`;
+    // cover the window grown by 2 x blur on each side
+    const bw = W + 4 * blur, bh = H + 4 * blur, iw = bgPic.naturalWidth, ih = bgPic.naturalHeight;
+    const s = Math.max(bw / iw, bh / ih), dw = iw * s, dh = ih * s;
+    ctx.drawImage(bgPic, (W / 2 - dw / 2) * k, (H / 2 - dh / 2) * k, dw * k, dh * k);
+    bgCanvases.set(key, c);
+    while (bgCanvases.size > BG_KEEP) bgCanvases.delete(bgCanvases.keys().next().value);
+    return c;
+  };
+  // show the canvas for this blur, faded in over the one showing (drawn at most every BG_DRAW_GAP_MS while a slider moves)
+  const showBgBlur = (blur, now) => {
+    if (!canBgCanvas || !bgPic) return;
+    const size = innerWidth + 'x' + innerHeight;
+    if (size !== bgSize) { bgSize = size; bgCanvases.clear(); bgShownBlur = null; }
+    if (blur === bgShownBlur) return;
+    if (!now && !bgCanvases.has(blur + '') && performance.now() - bgDrawAt < BG_DRAW_GAP_MS) {
+      clearTimeout(bgDrawT);
+      bgDrawT = setTimeout(applyBgVars, BG_DRAW_GAP_MS);
+      return;
+    }
+    if (!bgCanvases.has(blur + '')) bgDrawAt = performance.now();
+    const c = bgCanvasFor(blur);
+    bgShownBlur = blur;
+    for (const o of bgLayer.querySelectorAll('.am-bg-cv.am-on')) if (o !== c) o.classList.remove('am-on');
+    bgLayer.append(c);                                   // on top (and before the dim), so it fades in over the old one
+    // two frames: drawn see-through first, so the fade runs
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (bgShownBlur === blur) c.classList.add('am-on'); }));
+    // the ones not showing leave the page once the fade is done (kept in the Map for later)
+    setTimeout(() => { for (const o of bgLayer.querySelectorAll('.am-bg-cv:not(.am-on)')) if (o !== c || bgShownBlur !== blur) o.remove(); }, dur(450));
+  };
+  // the picture changed (applyBg): loaded, then drawn
+  let bgPicRun = 0;
+  const setBgPic = url => {
+    const run = ++bgPicRun;
+    bgCanvases.clear(); bgShownBlur = null; bgPic = null;
+    bgLayer.querySelectorAll('.am-bg-cv').forEach(c => c.remove());
+    if (!url || !canBgCanvas) return;
+    const im = new Image();
+    im.onload = () => { if (run !== bgPicRun) return; bgPic = im; applyBgVars(); };
+    im.src = url;
+  };
+  addEventListener('resize', () => { clearTimeout(bgDrawT); bgDrawT = setTimeout(() => { if (bgPic) { bgSize = ''; applyBgVars(); } }, 200); });
+  html.classList.toggle('am-bg-css', !canBgCanvas);
   const applyBgVars = () => {
     // on the background layer itself, not <html> (see setVars in the settings): a Dim / Blur drag restyles only it
+    const blur = look.bg === 'color' ? 0 : blurFor(curPage);
     bgLayer.style.setProperty('--am-bg-dim', String(look.bg === 'color' ? 0 : dimFor(curPage) / 100));
-    bgLayer.style.setProperty('--am-bg-blur', (look.bg === 'color' ? 0 : blurFor(curPage)) + 'px');
+    bgLayer.style.setProperty('--am-bg-blur', blur + 'px');
+    showBgBlur(blur);
   };
   const restoreCleared = () => {
-    for (const n of cleared) { n.style.removeProperty('background-color'); n.style.removeProperty('box-shadow'); }
-    cleared.clear();
+    for (const ref of clearedRefs) {
+      const n = ref.deref();
+      if (n) { n.style.removeProperty('background-color'); n.style.removeProperty('box-shadow'); }
+    }
+    cleared = new WeakSet();
+    clearedRefs = [];
   };
   const darkOpaque = c => {
     const n = /^rgba?\(/.test(c) && c.match(/[\d.]+/g);
@@ -2889,15 +3145,23 @@
   };
   let pfpEl = null;
   const shaded = new Set();
+  // header elements already checked (hit or not): not measured again each second. One under 300 px wide isn't marked,
+  // it may still grow. Forgotten when the header or the setting changes (clearShade)
+  let shadeChecked = new WeakSet(), shadeHeader = null, shadeCalls = 0;
   const clearShade = () => {
     for (const n of shaded) { n.classList.remove('am-noshade'); n.style.removeProperty('background-color'); }
     shaded.clear();
+    shadeChecked = new WeakSet();
   };
   const syncArtist = () => {
     const onArtist = curPage === 'artist';
     const h = onArtist && artistHeader();
     // profile picture above the name
-    const wantPic = h && (look.artistHead === 'picture' || look.artistHead === 'both');
+    // not when the header has a picture of its own: YouTube channels (YTM's "visual" header) show one, music artists
+    // (the "immersive" header) don't
+    const ownPic = h && [...h.querySelectorAll('ytmusic-thumbnail-renderer img, ytmusic-thumbnail-renderer yt-img-shadow')]
+      .some(n => n.getClientRects().length > 0);
+    const wantPic = h && !ownPic && (look.artistHead === 'picture' || look.artistHead === 'both');
     const titleEl = wantPic && (h.querySelector('h1') || h.querySelector('.title'));
     const src = titleEl && artistPicture(h);
     if (src) {
@@ -2907,9 +3171,14 @@
     } else if (pfpEl) { pfpEl.remove(); pfpEl = null; }
     // shadow: gradients and dark see-through fills on the header's big parts (not its buttons)
     if (!h || !look.noArtistShade) { if (shaded.size) clearShade(); return; }
+    // a new header, and every 10th call (once a second): checked again, for a gradient YTM added after the first look
+    shadeCalls++;
+    if (h !== shadeHeader || shadeCalls % 10 === 0) { shadeHeader = h; shadeChecked = new WeakSet(); }
     for (const n of [h, ...h.querySelectorAll('*')]) {
-      if (shaded.has(n) || n === pfpEl || n.closest('button, a, yt-button-shape, yt-button-renderer, ytmusic-subscribe-button-renderer, svg')) continue;
+      if (shadeChecked.has(n) || n === pfpEl) continue;
+      if (n.closest('button, a, yt-button-shape, yt-button-renderer, ytmusic-subscribe-button-renderer, svg')) { shadeChecked.add(n); continue; }
       if (n.getBoundingClientRect().width < 300) continue;
+      shadeChecked.add(n);
       let hit = false;
       for (const ps of [null, '::before', '::after']) {
         const bi = getComputedStyle(n, ps).backgroundImage;
@@ -2929,6 +3198,7 @@
   // Measured instead of a fixed selector list because YTM's layouts differ between accounts.
   const sweepBg = () => {
     if (look.bg === 'default') return;
+    if (clearedRefs.length > 200) clearedRefs = clearedRefs.filter(r => r.deref());   // the freed ones
     const seen = new Set();
     for (const fx of [0.02, 0.3, 0.6, 0.98]) for (const fy of [0.04, 0.5, 0.92]) {
       for (const n of document.elementsFromPoint(innerWidth * fx, innerHeight * fy)) {
@@ -2951,7 +3221,7 @@
           n.style.setProperty('box-shadow', 'none', 'important');
           hit = true;
         }
-        if (hit) cleared.add(n);
+        if (hit) { cleared.add(n); clearedRefs.push(new WeakRef(n)); }
       }
     }
   };
@@ -2991,6 +3261,7 @@
     if (bgUrl) URL.revokeObjectURL(bgUrl);
     bgUrl = blob ? URL.createObjectURL(blob) : null;
     bgImg.style.backgroundImage = bgUrl ? `url("${bgUrl}")` : 'none';
+    setBgPic(bgUrl);
     bgLayer.style.backgroundColor = look.bg === 'color' ? look.bgColor : '#000';
     applyBgVars();
     html.classList.toggle('am-bg-on', look.bg !== 'default');
@@ -3613,8 +3884,13 @@
     /* custom background */
     .am-bg { position: fixed; inset: 0; z-index: -1; display: none; overflow: hidden; pointer-events: none; background: #000; }
     html.am-bg-on .am-bg { display: block; }
+    /* the background picture: blurred canvases (look.js, showBgBlur), faded one into the other. .am-bg-img is the
+       version for browsers without canvas filters (html.am-bg-css): the picture with a CSS blur */
     .am-bg-img { position: absolute; inset: calc(var(--am-bg-blur, 0px) * -2); background: center / cover no-repeat;
-      filter: blur(var(--am-bg-blur, 0px)); }
+      filter: blur(var(--am-bg-blur, 0px)); display: none; }
+    html.am-bg-css .am-bg-img { display: block; }
+    .am-bg-cv { position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: 0; transition: opacity .35s ease; }
+    .am-bg-cv.am-on { opacity: 1; }
     .am-bg::after { content: ""; position: absolute; inset: 0; background: rgb(0 0 0 / var(--am-bg-dim, 0)); }
     html.am-bg-on, html.am-bg-on body { background: transparent !important; }
     /* YTM's page fade: a gradient from 60% black to solid #030303 over the whole page (Home, Explore, artist pages...) */
@@ -3635,7 +3911,7 @@
     .am-artist-pfp { display: block; width: 136px; height: 136px; margin: 0 0 18px; border-radius: 50%; object-fit: cover;
       box-shadow: 0 10px 34px rgb(0 0 0 / .45); background: rgb(255 255 255 / .08); }
     .am-bg::after { transition: background .35s ease; }
-    .am-bg-img { transition: filter .35s ease, inset .35s ease; }
+    html.am-bg-css .am-bg-img { transition: filter .35s ease, inset .35s ease; }
     html.am-bg-on #nav-bar-background { background: rgb(0 0 0 / .3) !important;
       backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); }
     /* search page tab strip (YT Music / Library / Uploads): see-through; glass like the top bar while it sticks */
@@ -3910,9 +4186,7 @@
       line-height: 1; letter-spacing: -.03em; }
     html.am-brand-on .am-brand { display: inline-flex; }
 
-    /* the bar's 3-dot menu opens downward: it comes in from above */
-    .am-menu.am-menu-down { animation-name: am-menu-in-down; }
-    @keyframes am-menu-in-down { from { opacity: 0; scale: .92; translate: 0 -6px; } to { opacity: 1; scale: 1; translate: 0 0; } }
+    /* the bar's 3-dot menu opens downward (bar at the top): it slides in from above (.am-menu-down, styles.js) */
   `;
   // the space for the bar under the header, rewritten only when it changes
   const posStyle = el('style', null, document.head);
@@ -3969,32 +4243,55 @@
   addEventListener('focusout', () => setTimeout(syncSearch, 0), true);    // focus has moved on only after the event
 
   // the glass behind YTM's search suggestions (styles.js): one box per section of suggestions (searches, then songs /
-  // artists), each a layer of its own laid over the section's place every frame while a search box is open, hidden
-  // once it closes. Kept in a holder so amOff() removes them all at once
+  // artists), each a layer of its own laid over the section's place, hidden once the list closes. Kept in a holder so
+  // amOff() removes them all at once.
+  // Measured only while something changes: after typing, focus, a scroll, a resize or a change in the search box, the
+  // boxes follow the list on every frame until it has stood still for GLASS_FRAMES frames (its open animation, new
+  // results). The loop also measures once a tick while a search box is open, in case a change was missed.
   const searchGlass = el('div', 'am-search-glasses', document.body);
-  let glassRaf = 0;
+  const GLASS_FRAMES = 12;
+  let glassRaf = 0, glassLeft = 0, glassKey = '';
   const glassFrame = () => {
     glassRaf = 0;
     const list = document.querySelector('ytmusic-search-box[opened] #suggestion-list');
     const on = !!list && getComputedStyle(list).display !== 'none' && !zenEl;
     const rects = on ? [...list.querySelectorAll('ytmusic-search-suggestions-section')]
       .map(s => s.getBoundingClientRect()).filter(r => r.height > 8) : [];
-    while (searchGlass.children.length < rects.length) el('div', 'am-search-glass', searchGlass);
-    [...searchGlass.children].forEach((g, i) => {
-      const r = rects[i];
-      g.classList.toggle('am-on', !!r);
-      if (r) Object.assign(g.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
-    });
-    if (searchActive()) glassRaf = requestAnimationFrame(glassFrame);
+    const key = rects.map(r => [r.left, r.top, r.width, r.height].map(n => n.toFixed(1)).join(',')).join('|');
+    if (key !== glassKey) {                 // moved, grew, opened or closed: written now, and followed a while longer
+      glassKey = key;
+      glassLeft = GLASS_FRAMES;
+      while (searchGlass.children.length < rects.length) el('div', 'am-search-glass', searchGlass);
+      [...searchGlass.children].forEach((g, i) => {
+        const r = rects[i];
+        g.classList.toggle('am-on', !!r);
+        if (r) Object.assign(g.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+      });
+    }
+    if (--glassLeft > 0 && (glassKey || searchActive())) glassRaf = requestAnimationFrame(glassFrame);
   };
+  const kickGlass = () => { glassLeft = GLASS_FRAMES; if (!glassRaf) glassRaf = requestAnimationFrame(glassFrame); };
+  // YTM's search box: any change in it (the list opening, new results, suggestions coming back on a second focus with
+  // no input event) starts the following
+  const glassObs = new MutationObserver(kickGlass);
+  let glassBox = null;
   // a search box open, or about to be: YTM marks it [opened] a moment after it gets focus, and on a second focus with
   // text already typed it brings the suggestions back only after that, with no input event
   const searchActive = () => !!document.querySelector('ytmusic-search-box[opened], ytmusic-search-box:focus-within');
-  // also called by the sync loop (4 times a second), so a list that opens without a focus or input event still
-  // gets its glass
-  const syncSearchGlass = () => { if (!glassRaf && searchActive()) glassRaf = requestAnimationFrame(glassFrame); };
-  addEventListener('focusin', syncSearchGlass, true);
-  addEventListener('input', syncSearchGlass, true);
+  // called by the sync loop (4 times a second): one measure while a search box is open (or its glass still shows)
+  const syncSearchGlass = () => {
+    const sb = document.querySelector('ytmusic-search-box');
+    if (sb !== glassBox) {
+      glassObs.disconnect();
+      glassBox = sb;
+      if (sb) glassObs.observe(sb, { subtree: true, childList: true, attributes: true, attributeFilter: ['opened', 'hidden', 'style'] });
+    }
+    if (!glassRaf && (glassKey || searchActive())) glassRaf = requestAnimationFrame(glassFrame);
+  };
+  addEventListener('focusin', kickGlass, true);
+  addEventListener('input', kickGlass, true);
+  addEventListener('scroll', () => { if (glassKey) kickGlass(); }, { capture: true, passive: true });
+  addEventListener('resize', () => { if (glassKey) kickGlass(); });
 
   // YTM's sidebar column on screen now: the guide whose primary section (Home / Explore / Library) is visible at the
   // left edge. YTM keeps two (expanded and mini) and can leave one "visible" off-screen, so it is checked by place.
@@ -4624,8 +4921,8 @@
     zbtn(ctl, 'NOT NOW', () => closeZen());
 
     await Promise.all([loadZenFonts(), findZenName().then(() => setHead(z.querySelector('.am-zhead')))]);
-    cutIn(z, ZEN_FADE_MS);
-    setTimeout(() => { if (zenEl === z) begin.focus({ preventScroll: true }); }, ZEN_FADE_MS);
+    cutIn(z, dur(ZEN_FADE_MS));
+    setTimeout(() => { if (zenEl === z) begin.focus({ preventScroll: true }); }, dur(ZEN_FADE_MS));
   };
 
   const startZen = async (until, start = Date.now()) => {
@@ -4678,7 +4975,7 @@
     zenSchedule();
     await loadZenFonts();
     if (!zenName) findZenName().then(() => { if (zenEl === z && setHead(zenUi.head)) fitZen(); });
-    cutIn(z, old ? 350 : ZEN_FADE_MS);
+    cutIn(z, dur(old ? 350 : ZEN_FADE_MS));
   };
 
   const closeZen = () => {
@@ -4696,7 +4993,7 @@
       restoreLyricsTab();
     }
     z.classList.add('am-zen-out');
-    setTimeout(() => z.remove(), 400);
+    setTimeout(() => z.remove(), dur(400));
   };
 
   // media keys / OS media controls: next, previous and seeking do nothing while in zen (YTM sets its handlers again
@@ -4906,7 +5203,7 @@
       Object.assign(ghost.style, { left: c.offsetLeft + 'px', top: c.offsetTop + 'px', width: c.offsetWidth + 'px' });
       box.append(ghost);
       const a = ghost.animate([{ opacity: .85, translate: '0 0' }, { opacity: 0, translate: '0 -.6em' }],
-        { duration: LYRIC_MOVE_MS, easing: LYRIC_EASE });
+        { duration: dur(LYRIC_MOVE_MS), easing: LYRIC_EASE });
       a.onfinish = a.oncancel = () => ghost.remove();
     }
     const nextChanged = !!n && n.textContent !== nextTxt;
@@ -4916,11 +5213,11 @@
       c.animate(fromNext
         ? [{ opacity: .35, translate: `0 ${nextTop - c.offsetTop}px` }, { opacity: .85, translate: '0 0' }]
         : [{ opacity: 0, translate: '0 .5em' }, { opacity: .85, translate: '0 0' }],
-        { duration: LYRIC_MOVE_MS, easing: LYRIC_EASE });
+        { duration: dur(LYRIC_MOVE_MS), easing: LYRIC_EASE });
     }
     if (nextChanged && nextTxt) {
       n.animate([{ opacity: 0, translate: '0 .5em' }, { opacity: .35, translate: '0 0' }],
-        { duration: LYRIC_MOVE_MS, easing: LYRIC_EASE, delay: 90, fill: 'backwards' });
+        { duration: dur(LYRIC_MOVE_MS), easing: LYRIC_EASE, delay: dur(90), fill: 'backwards' });
     }
   };
 
@@ -5181,6 +5478,8 @@
     .am-vinyl { position: absolute; left: var(--am-vbx, 0); top: var(--am-vby, 0); width: 100vw; height: 100vh;
       z-index: -1; overflow: hidden; pointer-events: none; display: none; }
     html.am-vinyl-on .am-vinyl { display: block; }
+    /* player page closed (after its close animation): not drawn, so the spin stops too */
+    html.am-vinyl-on.am-vinyl-away .am-vinyl { display: none; }
     .am-vinyl-disc { --r: var(--am-vr, 40vh); position: absolute; left: calc(var(--am-vcx, 0px) - var(--r)); top: calc(var(--am-vcy, 50vh) - var(--r));
       width: calc(var(--r) * 2); height: calc(var(--r) * 2); border-radius: 50%; overflow: hidden; background: #111;
       box-shadow: 0 0 0 1px rgb(255 255 255 / .06), 0 30px 80px rgb(0 0 0 / .55); }
@@ -5244,16 +5543,35 @@
     }
   };
 
+  // The record shows only while the player page is open. It goes once the page's close animation is done (it stands in
+  // for YTM's art, which would leave a hole while the page slides away) and comes back the moment the page opens.
+  // player-page.js calls this on open / close.
+  let vinylAwayT = 0, vinylLast = null;
+  const vinylPage = open => {
+    clearTimeout(vinylAwayT);
+    vinylAwayT = 0;
+    if (open) {
+      html.classList.remove('am-vinyl-away');
+      if (vinylLast) syncVinyl(...vinylLast);              // placed now, not on the next tick
+      return;
+    }
+    vinylAwayT = setTimeout(() => {
+      vinylAwayT = 0;
+      if (lastOpen !== true) html.classList.add('am-vinyl-away');
+    }, dur(Math.max(CLOSE_MS, POP_CLOSE_MS)) + 100);
+  };
   // called by the sync loop (4 times a second): one rect read, and only while the record shows
   const syncVinyl = (src, paused) => {
+    vinylLast = [src, paused];
+    // closed with no close animation running (e.g. the page was never opened): away
+    if (lastOpen !== true && !vinylAwayT) html.classList.add('am-vinyl-away');
     const pp = playerPage();
     const main = pp && pp.querySelector('#main-panel');
     const on = !!settings.vinyl && !!main && !!src && !videoMode(pp) && !isMobile();
     html.classList.toggle('am-vinyl-on', on);
     html.classList.toggle('am-vinyl-paused', !!paused);
     if (!on) return;
-    if (vinylBox.parentNode !== main) { main.prepend(vinylBox); vinylKey = ''; unclipVinyl(main, pp); }
-    placeVinyl(main);
+    // the art loads also while the record is away, so it is ready when the page opens
     const big = bigArt(src);
     if (big !== vinylSrc) {
       vinylSrc = big;
@@ -5262,12 +5580,16 @@
       vinylArt.onerror = big !== src ? () => { vinylArt.onerror = null; vinylArt.src = src; } : null;
       vinylArt.src = big;
     }
+    if (html.classList.contains('am-vinyl-away')) return;         // no measuring while it isn't drawn
+    if (vinylBox.parentNode !== main) { main.prepend(vinylBox); vinylKey = ''; unclipVinyl(main, pp); }
+    placeVinyl(main);
   };
   const vinylOff = () => {
     vinylBox.remove();
     vinylStyle.remove();
     document.querySelectorAll('.am-vinyl-unclip').forEach(n => n.classList.remove('am-vinyl-unclip'));
-    html.classList.remove('am-vinyl-on', 'am-vinyl-paused');
+    clearTimeout(vinylAwayT);
+    html.classList.remove('am-vinyl-on', 'am-vinyl-paused', 'am-vinyl-away');
   };
   /* ---------- art circle: the bar bounces, then a blurred, spinning copy of the art grows in a circle behind everything ---------- */
   // Misc > Experimental (off by default). CIRCLE_DELAY_MS after the player page starts to open, the bar bounces away from
@@ -5293,9 +5615,14 @@
     .am-circle-spin { position: absolute; left: 50%; top: 50%; width: 150vmax; height: 150vmax; margin: -75vmax 0 0 -75vmax;
       will-change: transform; animation: am-circle-spin ${CIRCLE_SPIN_S}s linear infinite; }
     @keyframes am-circle-spin { to { transform: rotate(360deg); } }
-    /* larger than the square: a blur fades out at its own edges */
-    .am-circle-art { position: absolute; inset: calc(-2 * ${CIRCLE_BLUR}px); background: center / cover no-repeat;
-      filter: blur(${CIRCLE_BLUR}px) saturate(1.4) brightness(.55); opacity: 0; transition: opacity ${CIRCLE_FADE_MS}ms ease; }
+    /* the blurred art: a small canvas, drawn once per song (acSetArt), stretched over the turning square */
+    .am-circle-art { position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: 0;
+      transition: opacity ${CIRCLE_FADE_MS}ms ease; }
+    /* a browser without canvas filters: the art at full size with a CSS blur, larger than the square (a blur fades out at
+       its own edges) */
+    .am-circle-art.am-circle-css { left: calc(-2 * ${CIRCLE_BLUR}px); top: calc(-2 * ${CIRCLE_BLUR}px);
+      width: calc(100% + 4 * ${CIRCLE_BLUR}px); height: calc(100% + 4 * ${CIRCLE_BLUR}px);
+      filter: blur(${CIRCLE_BLUR}px) saturate(1.4) brightness(.55); }
     .am-circle-art.am-ready { opacity: 1; }
     @media (prefers-reduced-motion: reduce) { .am-circle-spin { animation: none; } }
     /* see-through while it shows: the page, YTM's header and sidebar, and the app behind them */
@@ -5311,6 +5638,30 @@
   let acShown = false;                      // the circle is open (or opening) for this opening of the page
   const acCleared = new Map();              // element -> its inline background-color before (to put back)
 
+  /* The art, blurred, drawn once per song on a small canvas (AC_CANVAS px) that is stretched over the turning square.
+     The blur makes it smooth, so the small size doesn't show. Chrome gives a canvas a layer of its own and uses its
+     256 px picture as it is, scaled; nothing is painted. Before, the art was a CSS-blurred layer of ~3000 px a side
+     that took ~50 ms to paint (measured: a local copy of this layer, Chromium). An <img> made from the canvas was
+     tried too: Chrome paints it at full size (~27 ms), so the canvas it is.
+     CIRCLE_BLUR is meant for the full square (150vmax): it is scaled down with it. The art is drawn larger than the
+     canvas (as the CSS version was larger than the square), so the blur doesn't darken the edges. A browser without
+     canvas filters gets the CSS version. */
+  const AC_CANVAS = 256;
+  const acArtLayer = im => {
+    const c = el('canvas', 'am-circle-art');
+    c.width = c.height = AC_CANVAS;
+    const ctx = c.getContext('2d');
+    if (!ctx || !('filter' in ctx)) {
+      const d = el('div', 'am-circle-art am-circle-css');
+      d.style.background = `center / cover no-repeat url("${im.src.replace(/"/g, '%22')}")`;
+      return d;
+    }
+    const sq = 1.5 * Math.max(innerWidth, innerHeight), b = CIRCLE_BLUR * AC_CANVAS / sq, pad = 2 * b;
+    ctx.filter = `blur(${b.toFixed(2)}px) saturate(1.4) brightness(.55)`;
+    const s = Math.min(im.naturalWidth, im.naturalHeight) || 1;     // cover: the art's middle square
+    ctx.drawImage(im, (im.naturalWidth - s) / 2, (im.naturalHeight - s) / 2, s, s, -pad, -pad, AC_CANVAS + 2 * pad, AC_CANVAS + 2 * pad);
+    return c;
+  };
   // the next art: loaded first, then faded in over the old one, which goes once the fade is done
   const acSetArt = src => {
     acSrc = src;
@@ -5318,10 +5669,10 @@
     const im = new Image();
     im.onload = () => {
       if (acPending !== src) return;        // a newer song came meanwhile
-      const layer = el('div', 'am-circle-art', acSpin);
-      layer.style.backgroundImage = `url("${src.replace(/"/g, '%22')}")`;
+      const layer = acArtLayer(im);
+      acSpin.append(layer);
       requestAnimationFrame(() => requestAnimationFrame(() => layer.classList.add('am-ready')));
-      setTimeout(() => { for (const n of [...acSpin.children]) if (n !== layer && layer.isConnected) n.remove(); }, CIRCLE_FADE_MS + 100);
+      setTimeout(() => { for (const n of [...acSpin.children]) if (n !== layer && layer.parentNode === acSpin) n.remove(); }, dur(CIRCLE_FADE_MS) + 100);
     };
     im.src = src;
   };
@@ -5341,7 +5692,7 @@
       { translate: at(-B * 0.22), offset: 0.62, easing: 'cubic-bezier(.3, .6, .4, 1)' },
       { translate: at(B * 0.06), offset: 0.82 },
       { translate: '0px 0px' },
-    ], { duration: CIRCLE_BOUNCE_MS });
+    ], { duration: dur(CIRCLE_BOUNCE_MS) });
   };
 
   // other dark fills that would cover the circle (YTM's layouts differ between accounts): measured on a grid that
@@ -5366,9 +5717,25 @@
     acCleared.clear();
   };
 
-  // the circle, from the middle of the bar (or the middle of the bar's edge when the bar isn't on screen) to the
-  // farthest corner of the window
-  const acGrow = () => {
+  // the bar takes the circle back in: a small push into its edge, then back with a little overshoot (the open's
+  // bounce, reversed and smaller)
+  const catchBar = () => {
+    if (reduceMotion.matches || ['am-hidden', 'am-autohid', 'am-idle'].some(c => bar.classList.contains(c))) return;
+    const side = acSide();
+    const [dx, dy] = side === 'bottom' ? [0, -1] : side === 'top' ? [0, 1] : side === 'left' ? [1, 0] : [-1, 0];
+    const at = k => `${(dx * k).toFixed(1)}px ${(dy * k).toFixed(1)}px`;
+    const B = CIRCLE_BOUNCE_PX * CIRCLE_CATCH;
+    bar.animate([
+      { translate: '0px 0px', easing: 'cubic-bezier(.2, .7, .3, 1)' },
+      { translate: at(-B), offset: 0.35, easing: 'cubic-bezier(.3, .6, .4, 1)' },
+      { translate: at(B * 0.25), offset: 0.7 },
+      { translate: '0px 0px' },
+    ], { duration: dur(CIRCLE_CATCH_MS) });
+  };
+
+  // where the circle grows from and shrinks back to: the middle of the bar (or the middle of the bar's edge when the
+  // bar isn't on screen); R reaches the farthest corner of the window
+  const acGeom = () => {
     const w = innerWidth, h = innerHeight;
     const b = bar.getBoundingClientRect();
     const side = acSide();
@@ -5376,63 +5743,94 @@
     if (b.width && !bar.classList.contains('am-hidden')) { cx = b.left + b.width / 2; cy = b.top + b.height / 2; }
     else { cx = side === 'left' ? 0 : side === 'right' ? w : w / 2; cy = side === 'top' ? 0 : side === 'bottom' ? h : h / 2; }
     const R = Math.max(...[[0, 0], [w, 0], [0, h], [w, h]].map(([x, y]) => Math.hypot(x - cx, y - cy))) + 2;
-    const at = `at ${cx.toFixed(0)}px ${cy.toFixed(0)}px`;
+    return { R, at: `at ${cx.toFixed(0)}px ${cy.toFixed(0)}px` };
+  };
+  // the circle's radius on screen now, mid-animation too (null: no circle clip, the whole window)
+  const acRadius = () => { const m = /circle\(\s*([\d.]+)px/.exec(getComputedStyle(acClip).clipPath); return m ? +m[1] : null; };
+
+  // grows to cover the window, from radius `from` (0: out of the bar; more when it turns back mid-close)
+  const acGrow = (from = 0) => {
+    const { R, at } = acGeom();
     acBox.classList.remove('am-circle-wait');
     if (acAnim) acAnim.cancel();
-    const anim = acAnim = acClip.animate([{ clipPath: `circle(0px ${at})` }, { clipPath: `circle(${R.toFixed(0)}px ${at})` }],
-      { duration: CIRCLE_GROW_MS, easing: 'cubic-bezier(.45, 0, .2, 1)' });
+    const anim = acAnim = acClip.animate([{ clipPath: `circle(${from.toFixed(0)}px ${at})` }, { clipPath: `circle(${R.toFixed(0)}px ${at})` }],
+      { duration: dur(CIRCLE_GROW_MS * Math.max(.35, 1 - from / R)), easing: from ? 'cubic-bezier(.2, .7, .3, 1)' : 'cubic-bezier(.45, 0, .2, 1)' });
     const done = () => { if (acAnim === anim) acAnim = null; };
     anim.finished.then(done, done);
+  };
+  // the close: the circle shrinks back into the bar, faster as it goes (it is drawn in), and the bar catches it.
+  // From where it is when the page closes mid-grow. Outside the circle is YTM's own dark (or the custom background),
+  // so when it is gone and the page gets its own fills back, nothing changes on screen
+  const acShrink = () => {
+    const { R, at } = acGeom();
+    const from = Math.min(R, acRadius() ?? R);
+    if (acAnim) acAnim.cancel();
+    const anim = acAnim = acClip.animate([{ clipPath: `circle(${from.toFixed(0)}px ${at})` }, { clipPath: `circle(0px ${at})` }],
+      { duration: dur(CIRCLE_SHRINK_MS * Math.max(.35, from / R)), easing: 'cubic-bezier(.55, 0, .8, .25)', fill: 'forwards' });
+    anim.finished.then(() => {
+      if (acAnim !== anim || acShown) return;
+      catchBar();
+      acHide();
+    }, () => {});
+  };
+  // the header, sidebar and page get their own fills back
+  const acHide = () => {
+    clearTimeout(acHideTimer);
+    acHideTimer = 0;
+    if (acShown) return;
+    if (acAnim) { acAnim.cancel(); acAnim = null; }
+    html.classList.remove('am-circle-show');
+    acUnsweep();
   };
 
   // player-page.js calls these when the page opens / starts to close
   const circleOpen = () => {
     if (!settings.artCircle) return;
     if (!acBox.isConnected) document.body.append(acBox);   // after the custom background layer: drawn over it
+    // opened again while the circle was shrinking: it turns around from where it is, no bounce
+    const turn = !!acAnim && !acShown && !reduceMotion.matches ? acRadius() : null;
     clearTimeout(acTimer);
     clearTimeout(acHideTimer);
     acTimer = acHideTimer = 0;
-    if (acAnim) { acAnim.cancel(); acAnim = null; }
     acShown = true;
     acBox.classList.remove('am-circle-out');
     html.classList.add('am-circle-show');
     acSweep();
+    if (turn) { acGrow(turn); return; }
+    if (acAnim) { acAnim.cancel(); acAnim = null; }
     if (reduceMotion.matches) { acBox.classList.remove('am-circle-wait'); return; }
     acBox.classList.add('am-circle-wait');
     acTimer = setTimeout(() => {
       acTimer = 0;
       bounceBar();
       // out of the bar as it springs back
-      acTimer = setTimeout(() => { acTimer = 0; acGrow(); }, CIRCLE_BOUNCE_MS * 0.3);
-    }, CIRCLE_DELAY_MS);
+      acTimer = setTimeout(() => { acTimer = 0; acGrow(); }, dur(CIRCLE_BOUNCE_MS * 0.3));
+    }, dur(CIRCLE_DELAY_MS));
   };
-  // fades out while the page closes, then the header, sidebar and page get their own fills back
+  // shrinks back into the bar while the page closes. Not grown yet (closed during the bounce): it just goes. Reduced
+  // motion / animations off: a fade
   const circleClose = () => {
     clearTimeout(acTimer);
     acTimer = 0;
     if (!acShown) return;
     acShown = false;
-    acBox.classList.add('am-circle-out');
     clearTimeout(acHideTimer);
-    acHideTimer = setTimeout(() => {
-      acHideTimer = 0;
-      if (acShown) return;
-      if (acAnim) { acAnim.cancel(); acAnim = null; }
-      html.classList.remove('am-circle-show');
-      acUnsweep();
-    }, 320);
+    acHideTimer = 0;
+    if (acBox.classList.contains('am-circle-wait')) { acHide(); return; }
+    if (reduceMotion.matches) {
+      acBox.classList.add('am-circle-out');
+      acHideTimer = setTimeout(acHide, dur(320));
+      return;
+    }
+    acShrink();
   };
 
   // sync loop: keep the art ready, and turn on / off with the setting
   const syncCircle = src => {
     if (!settings.artCircle) {
-      if (acShown || html.classList.contains('am-circle-show')) {
-        circleClose();
-        clearTimeout(acHideTimer);
-        acHideTimer = 0;
-        html.classList.remove('am-circle-show');
-        acUnsweep();
-      }
+      // turned off while it shows: it shrinks back into the bar, as when the page closes (acHide at the end)
+      if (acShown) circleClose();
+      else if (html.classList.contains('am-circle-show') && !acAnim && !acHideTimer) acHide();
       return;
     }
     if (src && src !== acSrc) acSetArt(src);
@@ -5451,7 +5849,7 @@
   };
   /* ---------- high-quality art (Bar & menus > Art, off by default) ---------- */
   // YTM asks Google's image server for small pictures. Two kinds of address:
-  // - lh3.googleusercontent.com / yt3.ggpht.com (song and album art): the size is in the address (=w60-h60..., =s120):
+  // - lh3. / yt3.googleusercontent.com, yt3.ggpht.com (song and album art, artist pictures): the size is in the address (=w60-h60..., =s120):
   //   asked again at the size shown x the screen's pixel ratio, up to 1200.
   // - i.ytimg.com/vi/<id>/... (videos, and songs that only have a video's thumbnail): maxresdefault.jpg, else hq720.jpg.
   //   A missing one is an error or a 120 x 90 gray picture; then the next one is tried, and at the end the small one stays.
@@ -5463,7 +5861,7 @@
   const hqSize = px => Math.min(HQ_MAX, Math.max(120, Math.ceil(px * (devicePixelRatio || 1) / 60) * 60));
   const hqCandidates = (src, px) => {
     let m;
-    if (/^https:\/\/(lh\d+\.googleusercontent\.com|yt\d+\.ggpht\.com)\//.test(src)) {
+    if (/^https:\/\/((lh|yt)\d+\.googleusercontent\.com|yt\d+\.ggpht\.com)\//.test(src)) {
       const n = hqSize(px);
       if ((m = src.match(/=w(\d+)-h(\d+)/))) return Math.min(+m[1], +m[2]) >= n ? [] : [src.replace(/=w\d+-h\d+/, `=w${n}-h${n}`)];
       if ((m = src.match(/=s(\d+)/))) return +m[1] >= n ? [] : [src.replace(/=s\d+/, `=s${n}`)];
@@ -5501,14 +5899,25 @@
   };
   const HQ_IMGS = 'ytmusic-player-page #song-image img, ytmusic-player #song-image img, ytmusic-player-queue-item img, ' +
     'ytmusic-responsive-list-item-renderer img, ytmusic-two-row-item-renderer img, ytmusic-responsive-header-renderer img';
+  // which of those pictures are on screen: an IntersectionObserver keeps the set, so only those are measured (not
+  // every row picture of a long page, each second). It starts over every 10 calls: pictures YTM threw away aren't kept
+  const hqVisible = new Set();
+  let hqSeen = new WeakSet(), hqCalls = 0;
+  const hqIO = new IntersectionObserver(entries => {
+    for (const e of entries) { if (e.isIntersecting) hqVisible.add(e.target); else hqVisible.delete(e.target); }
+  });
+  const hqReset = () => { hqIO.disconnect(); hqVisible.clear(); hqSeen = new WeakSet(); };
   const syncHqArt = () => {
-    if (!settings.hqArt) return;
+    if (!settings.hqArt) { if (hqCalls) { hqReset(); hqCalls = 0; } return; }
+    if (++hqCalls % 10 === 0) hqReset();
+    for (const img of document.querySelectorAll(HQ_IMGS)) if (!hqSeen.has(img)) { hqSeen.add(img); hqIO.observe(img); }
     let n = 0;
-    for (const img of document.querySelectorAll(HQ_IMGS)) {
+    for (const img of hqVisible) {
+      if (!img.isConnected) { hqVisible.delete(img); continue; }
       const src = img.getAttribute('src') || '';
       if (!/^https:/.test(src)) continue;
       const r = img.getBoundingClientRect();
-      if (r.width < 24 || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) continue;   // on screen only
+      if (r.width < 24) continue;
       const big = hqFor(src, Math.max(r.width, r.height));
       if (big !== src) {
         if (img.hasAttribute('srcset')) img.removeAttribute('srcset');   // a srcset would win over the new src
@@ -5524,6 +5933,17 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.9', date: '2026-11-20', title: 'Faster everywhere, animation settings and fixes', items: [
+      'Faster: the bar shows a click at once (play / pause, mute, like, shuffle, repeat), Lyrics and Up next open sooner from a closed player page, an auto-hidden bar comes back as soon as you point near it, the 3-dot menus open and run their actions about twice as fast, and the settings open faster',
+      'Much less work in the background, in Firefox most of all: r1ytm no longer makes YouTube Music restyle the whole page several times a second, and does almost nothing in a background tab',
+      'Animations (Look > Animations): turn every r1ytm animation off, or make them faster or slower (0.5× to 3×). Also in the Ctrl+K palette',
+      'Art circle: when the player page closes (or you turn it off), the circle shrinks back into the bar. It, the custom background\'s blur and refraction are much lighter on the graphics card now',
+      'Menus fade and slide in, shuffle gives a small press when clicked, and repeat one shows its 1 inside the icon',
+      'Vinyl: the record goes away while the player page is closed',
+      'Fixed: the repeat and shuffle icons didn\'t change on newer YouTube Music layouts',
+      'Fixed: the bar could show the artist of another song (the one before, or one in the queue)',
+      'Fixed: YouTube channels showed two round pictures with the artist picture on. High-quality art skipped many pictures',
+    ] },
     { v: '1.9.8', date: '2026-11-16', title: 'Fixes: short windows, the up-next peek and the search box', items: [
       'Up-next peek: works again while the player page shows Lyrics or Related (or was left on them)',
       'The search box keeps its see-through look while you type (YouTube Music turned it black). The suggestions show in boxes styled like the search box, one for searches and one for songs and artists, with the text at the same size and a line between results',
@@ -5637,7 +6057,7 @@
     const c = clEl;
     clEl = null;
     c.classList.add('am-set-out');
-    setTimeout(() => c.remove(), 180);
+    setTimeout(() => c.remove(), dur(180));
   };
   // which: 'all', or a list of entries (the ones since the last version seen)
   const openChangelog = which => {
@@ -6142,7 +6562,7 @@
       if (!kNoticeEl) return;
       kNoticeEl = null;
       back.classList.add('am-set-out');
-      setTimeout(() => back.remove(), 180);
+      setTimeout(() => back.remove(), dur(180));
       res(r);
     };
     ok.addEventListener('click', () => {
@@ -6499,14 +6919,14 @@
     peekOn = true;
     peekDraw(peekT);
     if (reduceMotion.matches) { peekT = 1; peekDraw(1); return; }
-    peekRun(1, PEEK_OPEN_MS * (1 - peekT * .6));
+    peekRun(1, dur(PEEK_OPEN_MS * (1 - peekT * .6)));
   };
   const hidePeek = now => {
     clearTimeout(peekWait);
     if (!peekOn && peekT === 0) return;
     peekOn = false;
     if (now === true || reduceMotion.matches) { peekReset(); return; }
-    peekRun(0, PEEK_CLOSE_MS * Math.max(.4, peekT), () => { if (!peekOn) peekReset(); });
+    peekRun(0, dur(PEEK_CLOSE_MS * Math.max(.4, peekT)), () => { if (!peekOn) peekReset(); });
   };
   nextBtn.addEventListener('pointerenter', e => {
     if (e.pointerType === 'touch') return;
@@ -6551,7 +6971,15 @@
   const AUTOHIDE_EDGE = 10;                   // px from the window's edge on the bar's side
   const AUTOHIDE_SONG_MS = 3000;              // shown this long when a new song starts
   let ahPointer = null, ahAwakeUntil = 0, ahRect = null, ahTitle = '';
-  addEventListener('pointermove', e => { ahPointer = { x: e.clientX, y: e.clientY }; }, { passive: true, capture: true });
+  let ahMoveRaf = 0;
+  addEventListener('pointermove', e => {
+    ahPointer = { x: e.clientX, y: e.clientY };
+    // hidden and the pointer came near: back now, not on the next tick (once a frame at most). Hiding stays on the loop
+    if (!ahMoveRaf && bar.classList.contains('am-autohid')) ahMoveRaf = requestAnimationFrame(() => {
+      ahMoveRaf = 0;
+      if (bar.classList.contains('am-autohid') && ahNear()) syncAutoHide();
+    });
+  }, { passive: true, capture: true });
   document.documentElement.addEventListener('pointerleave', () => { ahPointer = null; });
   // show the bar now (a shortcut, a song change); it hides again after the delay
   const revealBar = (ms = AUTOHIDE_SONG_MS) => { ahAwakeUntil = Math.max(ahAwakeUntil, performance.now() + ms); };
@@ -6656,6 +7084,7 @@
     { id: 'autoHide', label: 'Auto-hide on / off', def: '', flip: 'autoHide', run: flipSetting('autoHide', 'Auto-hide') },
     { id: 'peek', label: 'Up-next peek on / off', def: '', flip: 'peek', run: flipSetting('peek', 'Up-next peek') },
     { id: 'refract', label: 'Refraction on / off', def: '', flip: 'refract', run: () => canRefract ? flipSetting('refract', 'Refraction')() : toast('Refraction needs Chrome, Edge or Brave') },
+    { id: 'anim', label: 'Animations on / off', def: '', flip: 'anim', run: flipSetting('anim', 'Animations') },
     { id: 'artCircle', label: 'Art circle on / off', def: 'Alt+Shift+KeyA', flip: 'artCircle', run: flipSetting('artCircle', 'Art circle') },
     { id: 'hqArt', label: 'High-quality art on / off', def: '', flip: 'hqArt', run: flipSetting('hqArt', 'High-quality art', () => syncHqArt()) },
     { id: 'vinyl', label: 'Vinyl on / off', def: 'Alt+Shift+KeyV', flip: 'vinyl', run: flipSetting('vinyl', 'Vinyl') },
@@ -6704,7 +7133,9 @@
     e.preventDefault();
     e.stopPropagation();
     if (e.repeat && !/^vol|faster|slower/.test(a.id)) return;
+    perfClick('key ' + a.id);
     a.run();
+    kickState();
   }, true);
 
   /* the Shortcuts page of the settings (built by openSettings, after Font / Background); returns a redraw function */
@@ -6795,7 +7226,7 @@
     if (p.contains(document.activeElement)) document.activeElement.blur();
     p.inert = true;
     p.classList.add('am-pal-out');
-    setTimeout(() => p.remove(), 140);
+    setTimeout(() => p.remove(), dur(140));
   };
   const openPalette = () => {
     if (palEl) { closePalette(); return; }
@@ -6828,7 +7259,7 @@
       });
     };
     const mark = () => [...list.children].forEach((r, i) => r.classList.toggle('am-kb', i === sel));
-    const run = c => { closePalette(); c.run(); };
+    const run = c => { closePalette(); c.run(); kickState(); };
     input.addEventListener('input', () => { sel = 0; render(); });
     back.addEventListener('keydown', e => {
       e.stopPropagation();                             // no YTM hotkeys while typing here
@@ -6996,6 +7427,22 @@
     for (const k of pr.files || []) { try { await idb.set(presetFileKey(pr.id, k), null); } catch {} }
   };
 
+  // the presets' gradient previews: drawn one per frame after the panel shows, not while it is built (drawing all 6 was
+  // most of the time the panel took to open: 14-28 ms of 20-49)
+  const thQueue = [];
+  let thRaf = 0;
+  const thPreview = (c, grad) => {
+    thQueue.push([c, grad]);
+    if (!thRaf) thRaf = requestAnimationFrame(thNext);
+  };
+  const thNext = () => {
+    thRaf = 0;
+    const job = thQueue.shift();
+    if (!job) return;
+    const [c, grad] = job;
+    if (c.isConnected) { try { gmRender(c.getContext('2d'), 240, 150, paintGrad(grad, 240, 150), gradOf(grad)); } catch {} }
+    if (thQueue.length) thRaf = requestAnimationFrame(thNext);
+  };
   // the "Look" page of the settings (built by openSettings, before Font / Background)
   const buildThemeSettings = p => {
     el('div', 'am-set-group', p).textContent = 'Look';
@@ -7010,7 +7457,7 @@
         // the gradient itself, rendered small with the maker's engine (2x for sharp screens)
         const c = el('canvas', 'am-th-cv', pv);
         c.width = 240; c.height = 150;
-        try { gmRender(c.getContext('2d'), 240, 150, paintGrad(pr.grad, 240, 150), gradOf(pr.grad)); } catch {}
+        thPreview(c, pr.grad);
       } else if (mine && (pr.look.bg === 'image' || pr.look.bg === 'gradient')) {
         idb.get(presetFileKey(pr.id, pr.look.bg === 'image' ? 'bg-image' : 'bg-gradient')).then(b => {
           if (b) { const u = URL.createObjectURL(b); pv.style.backgroundImage = `url("${u}")`; setTimeout(() => URL.revokeObjectURL(u), 60000); }
@@ -7058,10 +7505,29 @@
     const an = el('div', 'am-set-note', aCard);
     an.textContent = 'Sharper art on the player page, in the queue and in lists. Uses more data';
     an.style.margin = '-4px 0 10px';
-    ui.toggle(aCard, 'Art circle', () => settings.artCircle, v => { settings.artCircle = v; saveSettings(); });
+    ui.toggle(aCard, 'Art circle', () => settings.artCircle, v => { settings.artCircle = v; saveSettings(); syncCircle(acSrc); });
     const cn = el('div', 'am-set-note', aCard);
     cn.textContent = 'Player page: the bar bounces, then the blurred art grows out of it in a circle, spins slowly and colors the whole window';
     cn.style.margin = '-4px 0 10px';
+    // animations (helpers.js: motionK, dur(), motionCss(); applySettings sets them). The speed is dimmed while they are off
+    el('div', 'am-set-subhead', p).textContent = 'Animations';
+    const mCard = el('div', 'am-set-card', p);
+    let speedRow = null, mRaf = 0;
+    const dimSpeed = () => { if (speedRow) speedRow.classList.toggle('am-set-dim', !settings.anim); };
+    // the notes go inside their rows, as the panel's own rows have them (the label and note in a text column beside the
+    // switch; under a slider), so the rows keep the panel's spacing and the line between them
+    const tRow = ui.toggle(mCard, 'Animations', () => settings.anim, v => { settings.anim = v; applySettings(); saveSettings(); dimSpeed(); });
+    const lt = el('div', 'am-set-ltext');
+    tRow.prepend(lt);
+    lt.append(tRow.querySelector('.am-set-label'));
+    el('div', 'am-set-note', lt).textContent = 'Off: menus, the player page and the bar change at once, and the spinning art stands still. Also off when your system is set to reduce motion';
+    speedRow = ui.range(mCard, 'Animation speed', 50, 300, 10, '%', () => settings.animSpeed, v => {
+      settings.animSpeed = v;
+      saveSettings();
+      if (!mRaf) mRaf = requestAnimationFrame(() => { mRaf = 0; applySettings(); });   // once a frame while dragging
+    }, v => fmtSpeed(v / 100));
+    el('div', 'am-set-note', speedRow).textContent = 'Higher is faster';
+    dimSpeed();
   };
 
   const themeStyle = el('style', null, document.head);
@@ -7098,71 +7564,70 @@
     .am-th-note { margin-top: 8px; }
   `;
   /* ---------- sync loop ---------- */
-  let wasPaused = null, wasMuted = null, wasLiked = null, miniShowAt = 0, wasOpen = false, tick = 0;
-  const timer = setInterval(() => {
-    syncSpeed();                                          // also in zen: the speed stays what it is set to
-    checkPrompts();                                       // also in zen ("Listen on this device?")
-    if (zenEl) return;                                    // zen covers everything: nothing here is visible, save the work
-    // the settings panel covers the page: the page checks below (they measure the page, which is slow) wait, so the
-    // panel stays smooth. The bar keeps updating, it is the live preview for the bar settings.
-    const busy = !!setEl;
-    if (!busy && performance.now() > animatingUntil) hideBase();   // skip layout-heavy work mid-animation
-    if (tick++ % 4 === 0 && !busy) { syncGuideEntry(); syncBrand(); }   // sidebar entry, header logo: once a second is plenty
-    if (tick % 4 === 2 && !busy && performance.now() > animatingUntil) sweepBg();   // custom background: clear new page backgrounds
-    const pk = pageKey();                                 // another kind of page: its own dim / blur / header
-    if (pk !== curPage) {
-      html.classList.remove('am-page-' + curPage);
-      curPage = pk;
-      html.classList.add('am-page-' + curPage);
-      applyBgVars();
-      clearShade();
-    }
-    if (tick % 4 === 1 && !busy && curPage === 'artist') syncArtist();
-    if (tick % 4 === 3 && !busy) roomForPlaying();        // room for the playing row's overlay
-    if (tick % 4 === 1 && !busy) syncHqArt();             // high-quality art (off by default)
-    placeBar();                                           // bottom / top, in or under the header
-    syncSearch();
-    syncSearchGlass();                                    // the glass behind search suggestions (bar-position.js)
-    updateRefractMap();                                   // no-op unless refraction is on and the bar changed size
-    watchPage();
-    onPageState();
-    bar.classList.toggle('am-hidden', isFullscreen());
-    syncAutoHide();
-    syncPeek();
-    syncYtToast();
+  let wasPaused = null, wasMuted = null, wasLiked = null, wasShuf = null, wasRep = null, miniShowAt = 0, wasOpen = false, tick = 0;
 
+  /* amPerf(): run it in the console, use YTM for a while (30 s), then it prints how long each part of the loop takes
+     (average and slowest, in ms) and how long the bar took to show each click. Run it again to stop early. Off, it
+     costs nothing: perfPart() just calls the function. */
+  let perf = null;
+  const perfAdd = (name, d) => {
+    const x = perf.parts.get(name) || { calls: 0, total: 0, max: 0 };
+    x.calls++; x.total += d; x.max = Math.max(x.max, d);
+    perf.parts.set(name, x);
+  };
+  const perfPart = (name, fn) => {
+    if (!perf) return fn();
+    const t = performance.now();
+    try { return fn(); } finally { perfAdd(name, performance.now() - t); }
+  };
+  // a bar button was clicked / a shortcut pressed, and the bar's icon for it has now changed
+  let perfClickAt = 0, perfClickWhat = '';
+  const perfClick = what => { if (perf) { perfClickAt = performance.now(); perfClickWhat = what; } };
+  // syncState saw one of the bar's icons change: kickState can stop soon (and amPerf times the click)
+  let stateChanged = false, changedAt = 0;
+  const sawChange = what => { stateChanged = true; changedAt = performance.now(); perfSaw(what); };
+  const perfSaw = what => {
+    if (!perf || !perfClickAt || performance.now() - perfClickAt > 3000) return;
+    perf.clicks.push({ click: perfClickWhat, shown: what, ms: Math.round(performance.now() - perfClickAt) });
+    perfClickAt = 0;
+  };
+  // laps inside one part (syncState): each lap is the time since the last one, listed as its own row
+  let lapAt = 0;
+  const perfLapStart = () => { if (perf) lapAt = performance.now(); };
+  const perfLap = name => { if (!perf) return; const t = performance.now(); perfAdd(name, t - lapAt); lapAt = t; };
+  const perfReport = () => {
+    const p = perf;
+    perf = null;
+    clearTimeout(p.timer);
+    const s = (performance.now() - p.t0) / 1000;
+    const rows = [...p.parts].sort((a, b) => b[1].total - a[1].total).map(([part, x]) => ({ part, calls: x.calls,
+      'avg ms': +(x.total / x.calls).toFixed(2), 'max ms': +x.max.toFixed(2), 'ms per s': +(x.total / s).toFixed(2) }));
+    console.log(`[am-bar] amPerf: ${s.toFixed(1)} s`);
+    console.table(rows);
+    if (p.clicks.length) console.table(p.clicks); else console.log('[am-bar] amPerf: no bar clicks measured');
+  };
+  window.amPerf = (seconds = 30) => {
+    if (perf) { perfReport(); return; }
+    perf = { t0: performance.now(), parts: new Map(), clicks: [] };
+    perf.timer = setTimeout(() => perf && perfReport(), seconds * 1000);
+    console.log(`[am-bar] amPerf: measuring for ${seconds} s. Run amPerf() again to stop early`);
+  };
+
+  /* the bar's state from YTM: song, progress, play / pause, mute, volume, like, shuffle, repeat, lyrics / queue. The
+     loop runs it 4 times a second; after an action, kickState() runs it on every frame for a moment, so the bar shows
+     YTM's new state as soon as YTM has it (not on the next tick). It only ever shows what YTM shows. */
+  const syncState = () => {
+    perfLapStart();
     const m = navigator.mediaSession.metadata;
     const idle = !m || !m.title;
     bar.classList.toggle('am-idle', idle);
     if (!idle) {
-      if (title.textContent !== m.title) title.textContent = m.title;
+      if (title.textContent !== m.title) { if (title.textContent) sawChange('song'); title.textContent = m.title; }
       renderByline(m);
       const src = m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : '';
       if (src && art.src !== src) art.src = src;
     }
-    syncCircle(idle ? '' : (m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : ''));
-    { const v = video(); syncVinyl(idle ? '' : (m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : ''), !v || v.paused); }
-
-    // mobile: YTM's own mini art is hidden while the player page is open, and fades back in after it closed
-    const openNow = stateOpen();
-    if (openNow) document.documentElement.classList.add('am-mini-hidden');
-    else if (wasOpen) miniShowAt = performance.now() + MINI_ART_DELAY_MS;      // just closed: start the delay now
-    else if (performance.now() > miniShowAt) document.documentElement.classList.remove('am-mini-hidden');
-    wasOpen = openNow;
-
-    // mobile: line YTM's own mini art up with the art in our bar (center to center)
-    const yp = document.querySelector('ytmusic-player[player-ui-state="PLAYER_BAR_ONLY"]');
-    const ypImg = yp && yp.querySelector('#song-image');
-    if (yp && ypImg && !idle && matchMedia('(max-width: 700px)').matches) {
-      const a = art.getBoundingClientRect(), t = ypImg.getBoundingClientRect();
-      if (a.width && t.width) {
-        const dx = (parseFloat(yp.style.getPropertyValue('--am-dx')) || 0) + (a.left + a.width / 2 - t.left - t.width / 2);
-        const dy = (parseFloat(yp.style.getPropertyValue('--am-dy')) || 0) + (a.top + a.height / 2 - t.top - t.height / 2);
-        yp.style.setProperty('--am-dx', dx.toFixed(1) + 'px');
-        yp.style.setProperty('--am-dy', dy.toFixed(1) + 'px');
-      }
-    }
-
+    perfLap('  state: song, byline');
     const v = video();
     if (v) {
       const st = songTime(), pct = st ? (st.cur / st.dur) * 100 : 0;
@@ -7173,22 +7638,30 @@
         if (timeEl.textContent !== tt) timeEl.textContent = tt;
       }
       if (v.paused !== wasPaused) {
+        if (wasPaused !== null) sawChange('play / pause');
         wasPaused = v.paused;
         bar.classList.toggle('am-paused', v.paused);
         play.replaceChildren(svg(v.paused ? P.play : P.pause));
       }
       const muted = v.muted || getVolume() === 0;
       if (muted !== wasMuted) {
+        if (wasMuted !== null) sawChange('mute');
         wasMuted = muted;
         volBtn.replaceChildren(svg(muted ? P.mute : P.vol));
       }
     }
-    if (document.activeElement !== volRange && volTarget === null) volRange.value = String(getVolume());   // not mid-glide
+    perfLap('  state: progress, play, mute');
+    if (document.activeElement !== volRange && volTarget === null) {                     // not mid-glide
+      const vol = String(getVolume());
+      if (volRange.value !== vol) volRange.value = vol;
+    }
     showVolPct();
+    perfLap('  state: volume');
 
     const lk = ytLike();
     const liked = isLiked(lk);
     if (liked !== wasLiked) {
+      if (wasLiked !== null) sawChange('like');
       // a small bounce is the feedback (YTM's own toast is hidden); not on the first look or a new song
       if (wasLiked !== null && performance.now() - lastLikeAt < 4000) bounceHeart();
       wasLiked = liked;
@@ -7197,21 +7670,138 @@
       likeBtn.title = liked ? 'Remove like' : 'Like';
     }
 
-    const s = yt('Shuffle');
-    shuf.classList.toggle('am-on', !!s && s.getAttribute('aria-pressed') === 'true');
-    const r = yt('Repeat');
-    const rl = ((r && r.getAttribute('aria-label')) || '').toLowerCase();
+    perfLap('  state: like');
+    // YTM's store first (ytQueueModes, ytm-hooks.js); else what its buttons say
+    const qm = ytQueueModes();
+    const s = !qm && yt('Shuffle');
+    const shufOn = qm ? qm.shuffle : !!s && s.getAttribute('aria-pressed') === 'true';
+    if (shuf.classList.toggle('am-on', shufOn) !== wasShuf) { if (wasShuf !== null) sawChange('shuffle'); wasShuf = !wasShuf; }
+    const r = !qm && yt('Repeat');
+    // the store's 'NONE' contains "one": mapped exactly, not matched by text
+    const rl = qm ? ({ ALL: 'all', ONE: 'one' }[qm.repeat] || 'off') : ((r && r.getAttribute('aria-label')) || '').toLowerCase();
     rep.classList.toggle('am-on', rl.includes('all') || rl.includes('one'));
     rep.classList.toggle('am-one', rl.includes('one'));
+    if (rl !== wasRep) { if (wasRep !== null) sawChange('repeat'); wasRep = rl; }
 
+    perfLap('  state: shuffle, repeat');
     bar.classList.toggle('am-page-mode', isMobile() && stateOpen() && !sheetOpen());
-    lyricsBtn.classList.toggle('am-on', tabActive(...LYRICS));
-    queueBtn.classList.toggle('am-on', tabActive(...UPNEXT));
-  }, 250);
+    const open = pageOpen();
+    lyricsBtn.classList.toggle('am-on', tabActive(...LYRICS, open));
+    queueBtn.classList.toggle('am-on', tabActive(...UPNEXT, open));
+    perfLap('  state: lyrics, queue');
+    return { m, idle };
+  };
+  let kickRaf = 0, kickUntil = 0, loopOff = false;
+  const kickState = (ms = 400) => {
+    // the bar has just shown a change (this is likely the event of that same change, e.g. volumechange after the
+    // mute button): two frames are enough
+    if (performance.now() - changedAt < 100) ms = Math.min(ms, 33);
+    kickUntil = Math.max(kickUntil, performance.now() + ms);
+    if (kickRaf || loopOff) return;
+    const frame = () => {
+      kickRaf = 0;
+      if (zenEl) return;
+      stateChanged = false;
+      perfPart('syncState (after an action)', syncState);
+      // the change has shown: two more frames (a second part of it, e.g. the art after the title), then the loop again
+      if (stateChanged) kickUntil = Math.min(kickUntil, performance.now() + 33);
+      if (performance.now() < kickUntil && !loopOff) kickRaf = requestAnimationFrame(frame);
+    };
+    kickRaf = requestAnimationFrame(frame);
+  };
+  // YTM's own controls and keys too (space, media keys): the video says when it plays, pauses, mutes or loads a song.
+  // Media events don't bubble, so they are caught on the way down. Volume: only a mute change (a drag fires many)
+  let evMuted = null;
+  for (const t of ['play', 'pause', 'loadeddata', 'emptied']) document.addEventListener(t, () => kickState(t === 'loadeddata' ? 800 : 300), true);
+  document.addEventListener('volumechange', e => {
+    const v = e.target;
+    if (v && v.muted !== evMuted) { evMuted = v.muted; kickState(300); }
+  }, true);
+
+  /* page scans (hideBase's strip check, the custom background's sweep): they hit-test the page, which is slow. They
+     run on every tick for SCAN_BURST_MS after something changed that can bring new elements or move them (the address,
+     the player page, the bar's place or form, the window's size, fullscreen, the look settings; a scroll that ended
+     adds SCAN_SCROLL_MS: the home page loads more shelves), and every 2 s at other times. */
+  const SCAN_BURST_MS = 3000, SCAN_SCROLL_MS = 1000;
+  let scanUntil = 0, scanKey = '';
+  const scanSoon = ms => { scanUntil = Math.max(scanUntil, performance.now() + ms); };
+  const scanDue = () => performance.now() < scanUntil || tick % 8 === 0;
+  addEventListener('scrollend', () => scanSoon(SCAN_SCROLL_MS), { capture: true, passive: true });
+  const watchScan = () => {
+    const k = [location.href, stateOpen(), isFullscreen(), posNow, formNow, settings.barFloat, innerWidth, innerHeight,
+      look.bg, look.bgPlayer].join('|');
+    if (k !== scanKey) { scanKey = k; scanSoon(SCAN_BURST_MS); }
+  };
+
+  const loopTick = () => {
+    perfPart('syncSpeed', syncSpeed);                                          // also in zen: the speed stays what it is set to
+    perfPart('checkPrompts', checkPrompts);                                       // also in zen ("Listen on this device?")
+    if (zenEl) return;                                    // zen covers everything: nothing here is visible, save the work
+    if (document.hidden) return;                          // a background tab: nothing shows; a full tick on return (below)
+    // the settings panel covers the page: the page checks below (they measure the page, which is slow) wait, so the
+    // panel stays smooth. The bar keeps updating, it is the live preview for the bar settings.
+    const busy = !!setEl;
+    perfPart('watchScan', watchScan);
+    if (!busy && performance.now() > animatingUntil) perfPart('hideBase', hideBase);   // skip layout-heavy work mid-animation
+    if (tick++ % 4 === 0 && !busy) { perfPart('syncGuideEntry', syncGuideEntry); perfPart('syncBrand', syncBrand); }   // sidebar entry, header logo: once a second is plenty
+    // custom background: clear new page backgrounds (every other tick while scans run often, else every 2 s)
+    if (!busy && performance.now() > animatingUntil && (performance.now() < scanUntil ? tick % 2 === 0 : tick % 8 === 2)) perfPart('sweepBg', sweepBg);
+    const pk = pageKey();                                 // another kind of page: its own dim / blur / header
+    if (pk !== curPage) {
+      html.classList.remove('am-page-' + curPage);
+      curPage = pk;
+      html.classList.add('am-page-' + curPage);
+      perfPart('applyBgVars', applyBgVars);
+      perfPart('clearShade', clearShade);
+    }
+    if (tick % 4 === 1 && !busy && curPage === 'artist') perfPart('syncArtist', syncArtist);
+    if (tick % 4 === 3 && !busy) perfPart('roomForPlaying', roomForPlaying);        // room for the playing row's overlay
+    if (tick % 4 === 1 && !busy) perfPart('syncHqArt', syncHqArt);             // high-quality art (off by default)
+    perfPart('placeBar', placeBar);                                           // bottom / top, in or under the header
+    perfPart('syncSearch', syncSearch);
+    perfPart('syncSearchGlass', syncSearchGlass);                                    // the glass behind search suggestions (bar-position.js)
+    perfPart('updateRefractMap', updateRefractMap);                                   // no-op unless refraction is on and the bar changed size
+    perfPart('watchPage', watchPage);
+    perfPart('onPageState', onPageState);
+    bar.classList.toggle('am-hidden', isFullscreen());
+    perfPart('syncAutoHide', syncAutoHide);
+    perfPart('syncPeek', syncPeek);
+    perfPart('syncYtToast', syncYtToast);
+
+    const { m, idle } = perfPart('syncState', syncState);
+    const artSrc = idle ? '' : (m.artwork && m.artwork.length ? m.artwork[m.artwork.length - 1].src : '');
+    perfPart('syncCircle', () => syncCircle(artSrc));
+    { const v = video(); perfPart('syncVinyl', () => syncVinyl(artSrc, !v || v.paused)); }
+
+    // mobile: YTM's own mini art is hidden while the player page is open, and fades back in after it closed
+    const openNow = stateOpen();
+    if (openNow) document.documentElement.classList.add('am-mini-hidden');
+    else if (wasOpen) miniShowAt = performance.now() + dur(MINI_ART_DELAY_MS);      // just closed: start the delay now
+    else if (performance.now() > miniShowAt) document.documentElement.classList.remove('am-mini-hidden');
+    wasOpen = openNow;
+
+    // mobile: line YTM's own mini art up with the art in our bar (center to center)
+    const yp = document.querySelector('ytmusic-player[player-ui-state="PLAYER_BAR_ONLY"]');
+    const ypImg = yp && yp.querySelector('#song-image');
+    if (yp && ypImg && !idle && isMobile()) {
+      const a = art.getBoundingClientRect(), t = ypImg.getBoundingClientRect();
+      if (a.width && t.width) {
+        const dx = (parseFloat(yp.style.getPropertyValue('--am-dx')) || 0) + (a.left + a.width / 2 - t.left - t.width / 2);
+        const dy = (parseFloat(yp.style.getPropertyValue('--am-dy')) || 0) + (a.top + a.height / 2 - t.top - t.height / 2);
+        yp.style.setProperty('--am-dx', dx.toFixed(1) + 'px');
+        yp.style.setProperty('--am-dy', dy.toFixed(1) + 'px');
+      }
+    }
+  };
+  const timer = setInterval(() => perfPart('(whole tick)', loopTick), 250);
+  // back from the background: everything at once, not on the next tick
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !loopOff) loopTick(); });
 
   // amOff(): undo everything this script did to the page, so you can check whether a problem is ours or YTM's
   window.amOff = () => {
     clearInterval(timer);
+    loopOff = true;
+    cancelAnimationFrame(kickRaf);
     closeMenu();
     closeSettings();
     closePalette();
@@ -7227,6 +7817,8 @@
     posBase.remove();
     posStyle.remove();
     searchGlass.remove();
+    glassObs.disconnect();
+    hqReset();
     ['--am-hx', '--am-hw', '--am-hy', '--am-vx', '--am-vw', '--am-vy', '--am-vb', '--am-rpad'].forEach(v => bar.style.removeProperty(v));
     gFoot.remove();
     if (brandEl) brandEl.remove();

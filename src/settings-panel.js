@@ -38,6 +38,10 @@
       options: [['2 s', 2], ['4 s', 4], ['8 s', 8]], min: 2, max: 8, def: 4, dep: 'autoHide' },
     { group: 'Bar & menus', sub: 'Behavior', key: 'autoHideSong', type: 'toggle', label: 'Show on a new song', min: 0, max: 1, def: 1,
       dep: 'autoHide', note: () => 'For a few seconds' },
+    // every r1ytm animation (helpers.js: motionK, dur(), motionCss()); applySettings() applies them. Shown on the Look
+    // page (themes.js), so no group here
+    { key: 'anim', type: 'toggle', label: 'Animations', min: 0, max: 1, def: 1 },
+    { key: 'animSpeed', min: 50, max: 300, def: 100 },
     // playback speed (syncSpeed below). Kept in % so the steps stay whole numbers; shown as 1.25×
     { group: 'Playback', sub: 'Speed', key: 'speed', label: 'Speed', min: 50, max: 200, step: 1, def: 100, unit: '%',
       fmt: v => fmtSpeed(v / 100) },
@@ -114,7 +118,7 @@
     // hqart.js: shown on the Look page (themes.js)
     { key: 'hqArt', min: 0, max: 1, def: 0 },
     // art-circle.js: the effect when the player page opens; shown on the Look page (themes.js), under Art
-    { key: 'artCircle', min: 0, max: 1, def: 0 },
+    { key: 'artCircle', min: 0, max: 1, def: 0, change: () => syncCircle(acSrc) },   // art-circle.js: at once
     // share.js: the Koutube notice was answered with "Don't show this again"
     { key: 'koutubeOk', min: 0, max: 1, def: 0 },
   ];
@@ -161,7 +165,12 @@
   svgEl('feComposite', { in: 'rg', in2: 'cb', operator: 'arithmetic', k1: 0, k2: 1, k3: 1, k4: 0 }, refractFilter);
   document.body.append(refractDefs);
 
-  let refractKey = '';
+  /* The map is drawn at half size (REFRACT_MAP_SCALE; the feImage stretches it, and it is a smooth gradient), which is
+     a quarter of the work. While the bar's size is changing (a transition, a slider drag) the last map is stretched to
+     the new size at once, and drawn again only once the size has held for REFRACT_SETTLE_MS: drawing it is 5-30 ms of
+     JavaScript, too much for every step. */
+  const REFRACT_MAP_SCALE = 0.5, REFRACT_SETTLE_MS = 200;
+  let refractKey = '', refractSeen = '', refractSeenAt = 0, refractTimer = 0;
   const updateRefractMap = () => {
     if (!settings.refract || !canRefract) return;
     const w = Math.round(bar.offsetWidth), h = Math.round(bar.offsetHeight);
@@ -169,17 +178,31 @@
     const rad = Math.min(parseFloat(getComputedStyle(bar).borderTopLeftRadius) || 0, w / 2, h / 2);
     const key = w + 'x' + h + 'r' + rad;
     if (key === refractKey) return;                     // only redraw when the bar's shape changed
+    refractMap.setAttribute('width', w);                 // the last map, stretched to the new size for now
+    refractMap.setAttribute('height', h);
+    const now = performance.now();
+    if (refractKey) {                                    // not the first map: wait until the size holds
+      if (key !== refractSeen) { refractSeen = key; refractSeenAt = now; }
+      if (now - refractSeenAt < REFRACT_SETTLE_MS) {
+        clearTimeout(refractTimer);
+        refractTimer = setTimeout(updateRefractMap, REFRACT_SETTLE_MS + 20);
+        return;
+      }
+    }
     refractKey = key;
+    const cw = Math.max(1, Math.ceil(w * REFRACT_MAP_SCALE)), ch = Math.max(1, Math.ceil(h * REFRACT_MAP_SCALE));
     const c = document.createElement('canvas');
-    c.width = w; c.height = h;
+    c.width = cw; c.height = ch;
     const ctx = c.getContext('2d');
-    const img = ctx.createImageData(w, h), d = img.data;
+    const img = ctx.createImageData(cw, ch), d = img.data;
     const edge = Math.max(8, Math.min(h * 0.6, 48));    // how far in from the rim the bending reaches
     const hw = w / 2, hh = h / 2;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
+    for (let cy = 0; cy < ch; cy++) {
+      for (let cx = 0; cx < cw; cx++) {
+        // this map pixel's center, in the bar's own pixels
+        const x = (cx + 0.5) * w / cw, y = (cy + 0.5) * h / ch;
         // distance to the rounded-rect edge and the outward normal there
-        const px = x + 0.5 - hw, py = y + 0.5 - hh;
+        const px = x - hw, py = y - hh;
         const qx = Math.abs(px) - (hw - rad), qy = Math.abs(py) - (hh - rad);
         let dist, nx, ny;
         if (qx > 0 && qy > 0) {
@@ -192,7 +215,7 @@
         const lx = -px / hw * 0.12, ly = -py / hh * 0.22;
         const vx = Math.max(-1, Math.min(1, -nx * f * 0.88 + lx));
         const vy = Math.max(-1, Math.min(1, -ny * f * 0.88 + ly));
-        const i = (y * w + x) * 4;
+        const i = (cy * cw + cx) * 4;
         d[i] = 128 + vx * 127;
         d[i + 1] = 128 + vy * 127;
         d[i + 2] = 128;
@@ -200,8 +223,6 @@
       }
     }
     ctx.putImageData(img, 0, 0);
-    refractMap.setAttribute('width', w);
-    refractMap.setAttribute('height', h);
     refractMap.setAttribute('href', c.toDataURL());
   };
   const applyRefraction = () => {
@@ -261,7 +282,12 @@
       const [name, value] = s.css(settings[s.key]);
       by.set(s.scope, (by.get(s.scope) || '') + `${name}: ${value}; `);
     }
-    const css = [...by].map(([sel, decl]) => `${sel} { ${decl}}`).join('\n');
+    // animations: one factor for every r1ytm duration. On :root, so YTM's own elements r1ytm animates get it too; it
+    // only changes when the setting does
+    motionOff = !settings.anim;
+    motionK = motionOff ? 0 : 100 / (settings.animSpeed || 100);
+    const css = [...by].map(([sel, decl]) => `${sel} { ${decl}}`).join('\n') +
+      `\n:root { --am-k: ${motionOff ? 0.001 : +motionK.toFixed(3)}; --am-play: ${motionOff ? 'paused' : 'running'}; }`;
     if (setVars.textContent !== css) setVars.textContent = css;
     syncSpeed();
     document.documentElement.classList.toggle('am-easy-track', !!settings.easyTrack);
@@ -291,7 +317,7 @@
     const s = setEl;
     setEl = null;
     s.classList.add('am-set-out');
-    setTimeout(() => s.remove(), 180);
+    setTimeout(() => s.remove(), dur(180));
   };
   const openSettings = quiet => {
     if (setEl) return;
@@ -587,6 +613,14 @@
     // CSS (.am-collapsed) and only sizes, font, colors and the icon-to-label gap are copied
     const collapsed = ref.hasAttribute('is-collapsed') || !!items.closest('[is-collapsed]');
     e.g.classList.toggle('am-collapsed', collapsed);
+    // copied again only when the sidebar changed: its mode, the size of YTM's entry, the font (Look), the entries in it.
+    // Copying reads YTM's computed styles after clearing ours, which made the browser restyle ~20 times each second.
+    // Every 10 s anyway, for a change this key doesn't see
+    const r = ref.getBoundingClientRect();
+    const key = [collapsed, Math.round(r.width), Math.round(r.height), look.font, look.fontScope, items.children.length].join('|');
+    e.n = (e.n || 0) + 1;                                  // calls (once a second): every 10th copies anyway
+    if (e.key === key && e.n % 10 !== 0) return;
+    e.key = key;
     for (const n of [e.g, e.item, e.icon, e.col, e.ttl]) n.style.cssText = '';     // nothing stale from the other mode
     const rItem = ref.querySelector('tp-yt-paper-item'), rIcon = ref.querySelector('yt-icon'), rTitle = ref.querySelector('.title');
     copyCss(ref, e.g, ['display', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-left', 'padding-right']);

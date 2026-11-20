@@ -39,8 +39,27 @@
     add('path', { d: 'M10.2 9.2v5.6L14.9 12z', class: 'am-logo-tri' });
     return s;
   };
+  /* ---------- animation speed / off (Bar & menus > Animations) ---------- */
+  // Every r1ytm animation is scaled by one factor: 1 / speed, or 0 when animations are off (applySettings() in
+  // settings-panel.js sets both). JS durations go through dur(); CSS durations through motionCss(), which every style
+  // sheet made with el() runs through (below), so a new sheet is covered without doing anything.
+  let motionK = 1, motionOff = false;
+  const dur = ms => ms * motionK;
+  // CSS: each time in a transition / animation declaration becomes calc(<time> * var(--am-k, 1)). Off: --am-k is a tiny
+  // number, not 0, so transitionend / animation end states still happen. Endless animations (the spins) keep their own
+  // speed and are paused while animations are off (--am-play).
+  const MOTION_DECL = /((?:-webkit-)?(?:transition|animation)(?:-duration|-delay)?\s*:)([^;{}]*)/g;
+  const motionCss = css => css.replace(MOTION_DECL, (all, prop, val) => /\binfinite\b/.test(val)
+    ? `${all}; animation-play-state: var(--am-play, running)`
+    : prop + val.replace(/(^|[\s,(])(\d*\.?\d+)(ms|s)\b/g, (m, pre, n, u) => `${pre}calc(${n}${u} * var(--am-k, 1))`));
+  // a <style> made by el() rewrites what is put in it, and gives back what was put in (callers compare it to skip writes)
+  const nodeText = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+  const motionStyle = e => Object.defineProperty(e, 'textContent', { configurable: true,
+    get() { return this.amRaw !== undefined ? this.amRaw : nodeText.get.call(this); },
+    set(v) { this.amRaw = String(v); nodeText.set.call(this, motionCss(this.amRaw)); } });
   const el = (tag, cls, parent) => {
     const e = document.createElement(tag);
+    if (tag === 'style') motionStyle(e);
     if (cls) e.className = cls;
     if (parent) parent.append(e);
     return e;

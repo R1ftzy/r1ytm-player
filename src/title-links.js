@@ -30,8 +30,13 @@
     if (key === bylineKey) return;      // only rebuild when something changed
     bylineKey = key;
 
+    // YTM's byline can lag behind the song (it showed the last song's artist): links that don't match the media
+    // info's artist are not used; the plain text is shown until the byline catches up
+    const ma = (m.artist || '').trim().toLowerCase(), al = (m.album || '').trim().toLowerCase();
+    const stale = ma && links.length && !texts.some(t => { t = t.toLowerCase(); return t && t !== al && (ma.includes(t) || t.includes(ma)); });
+
     artist.replaceChildren();
-    if (!links.length) {                // fallback: plain text
+    if (!links.length || stale) {       // fallback: plain text
       artist.textContent = (m.artist || '') + (m.album ? ' | ' + m.album : '');
       albumIdx = -1;
       title.classList.remove('am-link');
@@ -66,7 +71,8 @@
   volRange.min = '0';
   volRange.max = '100';
   volRange.value = String(getVolume());
-  volRange.addEventListener('input', () => { setVolume(+volRange.value); showVolPct(); });
+  volRange.addEventListener('input', () => { setVolume(+volRange.value, true); showVolPct(); });
+  volRange.addEventListener('change', () => { setVolume(+volRange.value); showVolPct(); });   // let go: YTM saves it
   volRange.addEventListener('click', e => e.stopPropagation());
   // the volume in %, shown with the slider (between the slider and the button)
   const volPct = el('span', 'am-vol-pct', volWrap);
@@ -92,7 +98,7 @@
   const volGlide = now => {
     const dt = Math.min(64, now - volLastT);
     volLastT = now;
-    volCur += (volTarget - volCur) * (1 - Math.exp(-dt / VOL_GLIDE_MS));
+    volCur += (volTarget - volCur) * (1 - Math.exp(-dt / Math.max(.001, dur(VOL_GLIDE_MS))));
     const v = video();
     if (Math.abs(volTarget - volCur) < .05) {
       volCur = null;
@@ -187,10 +193,10 @@
       if (!a.width || !b.width) return;
       const dx = a.left - b.left, dy = a.top - b.top;
       if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-      n.animate([{ translate: `${dx}px ${dy}px` }, { translate: '0 0' }], { duration: LAYOUT_MOVE_MS, easing: LAYOUT_EASE });
+      n.animate([{ translate: `${dx}px ${dy}px` }, { translate: '0 0' }], { duration: dur(LAYOUT_MOVE_MS), easing: LAYOUT_EASE });
     });
     for (const n of [track, timeEl]) {
-      if (n.isConnected) n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: LAYOUT_MOVE_MS, easing: 'ease-out', delay: 120, fill: 'backwards' });
+      if (n.isConnected) n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: dur(LAYOUT_MOVE_MS), easing: 'ease-out', delay: dur(120), fill: 'backwards' });
     }
   };
   const syncLayoutDom = animate => {
@@ -498,7 +504,7 @@
     flyOn = true;
     if (!flyG || flyT === 0) flyRest();                     // reopened while closing: carry on from where it is
     if (reduceMotion.matches) { flyT = 1; flyDraw(1); return; }
-    flyRun(1, FLY_OPEN_MS * (1 - flyT * .6));
+    flyRun(1, dur(FLY_OPEN_MS * (1 - flyT * .6)));
   };
   // now === true: at once and all the way back to the bar's own look (the form is changing)
   const flyHide = now => {
@@ -507,7 +513,7 @@
     flyOn = false;
     if (now === true) { flyClear(); return; }
     if (reduceMotion.matches) { flyT = 0; flyRest(); return; }
-    flyRun(0, FLY_CLOSE_MS * Math.max(.4, flyT), () => { if (!flyOn) flyRest(); });
+    flyRun(0, dur(FLY_CLOSE_MS * Math.max(.4, flyT)), () => { if (!flyOn) flyRest(); });
   };
   const flyLater = () => {
     clearTimeout(flyTimer);

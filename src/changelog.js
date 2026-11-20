@@ -5,6 +5,17 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.9', date: '2026-11-20', title: 'Faster everywhere, animation settings and fixes', items: [
+      'Faster: the bar shows a click at once (play / pause, mute, like, shuffle, repeat), Lyrics and Up next open sooner from a closed player page, an auto-hidden bar comes back as soon as you point near it, the 3-dot menus open and run their actions about twice as fast, and the settings open faster',
+      'Much less work in the background, in Firefox most of all: r1ytm no longer makes YouTube Music restyle the whole page several times a second, and does almost nothing in a background tab',
+      'Animations (Look > Animations): turn every r1ytm animation off, or make them faster or slower (0.5× to 3×). Also in the Ctrl+K palette',
+      'Art circle: when the player page closes (or you turn it off), the circle shrinks back into the bar. It, the custom background\'s blur and refraction are much lighter on the graphics card now',
+      'Menus fade and slide in, shuffle gives a small press when clicked, and repeat one shows its 1 inside the icon',
+      'Vinyl: the record goes away while the player page is closed',
+      'Fixed: the repeat and shuffle icons didn\'t change on newer YouTube Music layouts',
+      'Fixed: the bar could show the artist of another song (the one before, or one in the queue)',
+      'Fixed: YouTube channels showed two round pictures with the artist picture on. High-quality art skipped many pictures',
+    ] },
     { v: '1.9.8', date: '2026-11-16', title: 'Fixes: short windows, the up-next peek and the search box', items: [
       'Up-next peek: works again while the player page shows Lyrics or Related (or was left on them)',
       'The search box keeps its see-through look while you type (YouTube Music turned it black). The suggestions show in boxes styled like the search box, one for searches and one for songs and artists, with the text at the same size and a line between results',
@@ -118,7 +129,7 @@
     const c = clEl;
     clEl = null;
     c.classList.add('am-set-out');
-    setTimeout(() => c.remove(), 180);
+    setTimeout(() => c.remove(), dur(180));
   };
   // which: 'all', or a list of entries (the ones since the last version seen)
   const openChangelog = which => {

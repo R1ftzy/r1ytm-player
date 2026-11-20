@@ -372,8 +372,13 @@
     /* custom background */
     .am-bg { position: fixed; inset: 0; z-index: -1; display: none; overflow: hidden; pointer-events: none; background: #000; }
     html.am-bg-on .am-bg { display: block; }
+    /* the background picture: blurred canvases (look.js, showBgBlur), faded one into the other. .am-bg-img is the
+       version for browsers without canvas filters (html.am-bg-css): the picture with a CSS blur */
     .am-bg-img { position: absolute; inset: calc(var(--am-bg-blur, 0px) * -2); background: center / cover no-repeat;
-      filter: blur(var(--am-bg-blur, 0px)); }
+      filter: blur(var(--am-bg-blur, 0px)); display: none; }
+    html.am-bg-css .am-bg-img { display: block; }
+    .am-bg-cv { position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: 0; transition: opacity .35s ease; }
+    .am-bg-cv.am-on { opacity: 1; }
     .am-bg::after { content: ""; position: absolute; inset: 0; background: rgb(0 0 0 / var(--am-bg-dim, 0)); }
     html.am-bg-on, html.am-bg-on body { background: transparent !important; }
     /* YTM's page fade: a gradient from 60% black to solid #030303 over the whole page (Home, Explore, artist pages...) */
@@ -394,7 +399,7 @@
     .am-artist-pfp { display: block; width: 136px; height: 136px; margin: 0 0 18px; border-radius: 50%; object-fit: cover;
       box-shadow: 0 10px 34px rgb(0 0 0 / .45); background: rgb(255 255 255 / .08); }
     .am-bg::after { transition: background .35s ease; }
-    .am-bg-img { transition: filter .35s ease, inset .35s ease; }
+    html.am-bg-css .am-bg-img { transition: filter .35s ease, inset .35s ease; }
     html.am-bg-on #nav-bar-background { background: rgb(0 0 0 / .3) !important;
       backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); }
     /* search page tab strip (YT Music / Library / Uploads): see-through; glass like the top bar while it sticks */

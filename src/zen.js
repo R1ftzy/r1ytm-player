@@ -301,8 +301,8 @@
     zbtn(ctl, 'NOT NOW', () => closeZen());
 
     await Promise.all([loadZenFonts(), findZenName().then(() => setHead(z.querySelector('.am-zhead')))]);
-    cutIn(z, ZEN_FADE_MS);
-    setTimeout(() => { if (zenEl === z) begin.focus({ preventScroll: true }); }, ZEN_FADE_MS);
+    cutIn(z, dur(ZEN_FADE_MS));
+    setTimeout(() => { if (zenEl === z) begin.focus({ preventScroll: true }); }, dur(ZEN_FADE_MS));
   };
 
   const startZen = async (until, start = Date.now()) => {
@@ -355,7 +355,7 @@
     zenSchedule();
     await loadZenFonts();
     if (!zenName) findZenName().then(() => { if (zenEl === z && setHead(zenUi.head)) fitZen(); });
-    cutIn(z, old ? 350 : ZEN_FADE_MS);
+    cutIn(z, dur(old ? 350 : ZEN_FADE_MS));
   };
 
   const closeZen = () => {
@@ -373,7 +373,7 @@
       restoreLyricsTab();
     }
     z.classList.add('am-zen-out');
-    setTimeout(() => z.remove(), 400);
+    setTimeout(() => z.remove(), dur(400));
   };
 
   // media keys / OS media controls: next, previous and seeking do nothing while in zen (YTM sets its handlers again
@@ -583,7 +583,7 @@
       Object.assign(ghost.style, { left: c.offsetLeft + 'px', top: c.offsetTop + 'px', width: c.offsetWidth + 'px' });
       box.append(ghost);
       const a = ghost.animate([{ opacity: .85, translate: '0 0' }, { opacity: 0, translate: '0 -.6em' }],
-        { duration: LYRIC_MOVE_MS, easing: LYRIC_EASE });
+        { duration: dur(LYRIC_MOVE_MS), easing: LYRIC_EASE });
       a.onfinish = a.oncancel = () => ghost.remove();
     }
     const nextChanged = !!n && n.textContent !== nextTxt;
@@ -593,11 +593,11 @@
       c.animate(fromNext
         ? [{ opacity: .35, translate: `0 ${nextTop - c.offsetTop}px` }, { opacity: .85, translate: '0 0' }]
         : [{ opacity: 0, translate: '0 .5em' }, { opacity: .85, translate: '0 0' }],
-        { duration: LYRIC_MOVE_MS, easing: LYRIC_EASE });
+        { duration: dur(LYRIC_MOVE_MS), easing: LYRIC_EASE });
     }
     if (nextChanged && nextTxt) {
       n.animate([{ opacity: 0, translate: '0 .5em' }, { opacity: .35, translate: '0 0' }],
-        { duration: LYRIC_MOVE_MS, easing: LYRIC_EASE, delay: 90, fill: 'backwards' });
+        { duration: dur(LYRIC_MOVE_MS), easing: LYRIC_EASE, delay: dur(90), fill: 'backwards' });
     }
   };
 

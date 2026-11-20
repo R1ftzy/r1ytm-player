@@ -24,6 +24,8 @@
     .am-vinyl { position: absolute; left: var(--am-vbx, 0); top: var(--am-vby, 0); width: 100vw; height: 100vh;
       z-index: -1; overflow: hidden; pointer-events: none; display: none; }
     html.am-vinyl-on .am-vinyl { display: block; }
+    /* player page closed (after its close animation): not drawn, so the spin stops too */
+    html.am-vinyl-on.am-vinyl-away .am-vinyl { display: none; }
     .am-vinyl-disc { --r: var(--am-vr, 40vh); position: absolute; left: calc(var(--am-vcx, 0px) - var(--r)); top: calc(var(--am-vcy, 50vh) - var(--r));
       width: calc(var(--r) * 2); height: calc(var(--r) * 2); border-radius: 50%; overflow: hidden; background: #111;
       box-shadow: 0 0 0 1px rgb(255 255 255 / .06), 0 30px 80px rgb(0 0 0 / .55); }
@@ -87,16 +89,35 @@
     }
   };
 
+  // The record shows only while the player page is open. It goes once the page's close animation is done (it stands in
+  // for YTM's art, which would leave a hole while the page slides away) and comes back the moment the page opens.
+  // player-page.js calls this on open / close.
+  let vinylAwayT = 0, vinylLast = null;
+  const vinylPage = open => {
+    clearTimeout(vinylAwayT);
+    vinylAwayT = 0;
+    if (open) {
+      html.classList.remove('am-vinyl-away');
+      if (vinylLast) syncVinyl(...vinylLast);              // placed now, not on the next tick
+      return;
+    }
+    vinylAwayT = setTimeout(() => {
+      vinylAwayT = 0;
+      if (lastOpen !== true) html.classList.add('am-vinyl-away');
+    }, dur(Math.max(CLOSE_MS, POP_CLOSE_MS)) + 100);
+  };
   // called by the sync loop (4 times a second): one rect read, and only while the record shows
   const syncVinyl = (src, paused) => {
+    vinylLast = [src, paused];
+    // closed with no close animation running (e.g. the page was never opened): away
+    if (lastOpen !== true && !vinylAwayT) html.classList.add('am-vinyl-away');
     const pp = playerPage();
     const main = pp && pp.querySelector('#main-panel');
     const on = !!settings.vinyl && !!main && !!src && !videoMode(pp) && !isMobile();
     html.classList.toggle('am-vinyl-on', on);
     html.classList.toggle('am-vinyl-paused', !!paused);
     if (!on) return;
-    if (vinylBox.parentNode !== main) { main.prepend(vinylBox); vinylKey = ''; unclipVinyl(main, pp); }
-    placeVinyl(main);
+    // the art loads also while the record is away, so it is ready when the page opens
     const big = bigArt(src);
     if (big !== vinylSrc) {
       vinylSrc = big;
@@ -105,10 +126,14 @@
       vinylArt.onerror = big !== src ? () => { vinylArt.onerror = null; vinylArt.src = src; } : null;
       vinylArt.src = big;
     }
+    if (html.classList.contains('am-vinyl-away')) return;         // no measuring while it isn't drawn
+    if (vinylBox.parentNode !== main) { main.prepend(vinylBox); vinylKey = ''; unclipVinyl(main, pp); }
+    placeVinyl(main);
   };
   const vinylOff = () => {
     vinylBox.remove();
     vinylStyle.remove();
     document.querySelectorAll('.am-vinyl-unclip').forEach(n => n.classList.remove('am-vinyl-unclip'));
-    html.classList.remove('am-vinyl-on', 'am-vinyl-paused');
+    clearTimeout(vinylAwayT);
+    html.classList.remove('am-vinyl-on', 'am-vinyl-paused', 'am-vinyl-away');
   };
