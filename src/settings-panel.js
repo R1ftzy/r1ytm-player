@@ -27,6 +27,11 @@
     { group: 'Bar & menus', sub: 'Size & position', key: 'barFloat', type: 'toggle', label: 'Floating', min: 0, max: 1, def: 1,
       change: () => { placeBar(); hideBase(); },
       note: () => "Off: the bar fills the width and sits on the edge of the window, like YouTube Music's own" },
+    // bar-position.js: with the bar in YTM's expanded sidebar (Left + Compact)
+    { group: 'Bar & menus', sub: 'Size & position', key: 'sideNoLine', type: 'toggle', label: 'Hide sidebar edge line', min: 0, max: 1, def: 1,
+      change: () => placeBar(), note: () => "Left + Compact, in the sidebar: no line down the sidebar's edge" },
+    { group: 'Bar & menus', sub: 'Size & position', key: 'sideFitList', type: 'toggle', label: 'Sidebar list ends above the bar', min: 0, max: 1, def: 1,
+      change: () => placeBar(), note: () => 'Left + Compact, in the sidebar: your library list scrolls in the space above the bar. Off: it runs behind the bar' },
     { group: 'Bar & menus', sub: 'Size & position', key: 'easyTrack', type: 'toggle', label: 'Easy progress bar', min: 0, max: 1, def: 1,
       note: () => 'Grows when you point at it, easier to drag' },
     // peek.js, autohide.js

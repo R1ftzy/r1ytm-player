@@ -196,6 +196,19 @@
 
   const setVar = (n, k, v) => { if (n.style.getPropertyValue(k) !== v) n.style.setProperty(k, v); };
   const setClass = (k, on) => { if (html.classList.contains(k) !== on) html.classList.toggle(k, on); };
+  // the bar in the sidebar (setting "Hide sidebar edge line"): YTM's lines down the sidebar's edge go. It draws two: a
+  // border on #guide-wrapper, and one on #mini-guide-background (a dark strip it fades in when the page scrolls or the
+  // player opens; a custom background makes its fill see-through, so the line shows). Set on the elements themselves:
+  // an inline !important beats any rule of YTM's (a CSS rule alone didn't, signed in). Put back after
+  const EDGE_LINES = '#guide-wrapper, #mini-guide-background';
+  let edgeOff = false;
+  const sideEdgeLines = off => {
+    for (const n of document.querySelectorAll(EDGE_LINES)) {
+      if (off) { if (n.style.getPropertyValue('border-right-width') !== '0px') n.style.setProperty('border-right-width', '0px', 'important'); }
+      else if (edgeOff) n.style.removeProperty('border-right-width');
+    }
+    edgeOff = off;
+  };
 
   // the search pill has focus or its suggestions are open: it grows and the bar gets narrower (placeBar)
   const syncSearch = () => {
@@ -351,6 +364,7 @@
     const gd = pos === 'left' && !full ? activeGuide() : null;
     setClass('am-side-full', full);
     setClass('am-side-in', !!gd);
+    sideEdgeLines(!!gd && !!settings.sideNoLine);
     setClass('am-side-float', !gd && !full);
     let x, w, top, bottom, css = '', railH = 0;
     if (full) {
@@ -395,13 +409,25 @@
         top = Math.round(gd.below + 12);
         railH = innerHeight - bottom - top;
       } else {
-        // expanded: the card at the bottom; the list above it scrolls clear of the card and our entries
+        // expanded: the card at the bottom. YTM's list above it is a scroll box of its own that ends above the card, so
+        // nothing in it goes behind the card or our entries under it (it used to scroll behind them, with room added at
+        // its end); its last pixels fade out, so it shows there is more
         vertForm = 'card';
         w = dock ? gd.r.width : gd.col.width - 2 * SIDE_GAP;
         x = dock ? gd.r.left : gd.col.left + SIDE_GAP;
         top = 'auto';
-        const room = (bar.offsetHeight || 170) + (innerHeight - footTop) + 24;
-        css = `html.am-side-in ytmusic-guide-renderer::after { content: ""; display: block; height: ${Math.round(room)}px; }`;
+        const gr = gd.items.closest('ytmusic-guide-renderer') || document.querySelector('ytmusic-guide-renderer');
+        const listTop = gr ? gr.getBoundingClientRect().top : 64;
+        const cardTop = innerHeight - bottom - (bar.offsetHeight || 170);
+        const listH = Math.max(120, Math.round(cardTop - SIDE_GAP - listTop));
+        // setting off: the list runs the sidebar's whole height, behind the card, with room at its end so its last
+        // items can be scrolled clear of the card and our entries
+        if (!settings.sideFitList) css = `html.am-side-in ytmusic-guide-renderer::after { content: ""; display: block;
+          height: ${Math.round((bar.offsetHeight || 170) + (innerHeight - footTop) + 24)}px; }`;
+        else css = `html.am-side-in ytmusic-guide-renderer { max-height: ${listH}px !important; overflow-y: auto !important;
+          overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: rgb(255 255 255 / .2) transparent;
+          -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }`;
       }
     } else {
       // a floating rail at the edge, under the header; the page and the player page keep clear of it
@@ -520,7 +546,7 @@
       css = placeSide(pos);
       if (!sideFits()) { sideFallback = innerHeight; placeBar(); return; }   // too short: once more, at the bottom
     }
-    else { setClass('am-side-in', false); setClass('am-side-float', false); bar.classList.remove('am-rshort', 'am-rshorter'); }
+    else { setClass('am-side-in', false); sideEdgeLines(false); setClass('am-side-float', false); bar.classList.remove('am-rshort', 'am-rshorter'); }
     if (posStyle.textContent !== css) posStyle.textContent = css;
     if (!railRaf) railSync();                              // left / right: the rail's shape follows it (title-links.js)
   };

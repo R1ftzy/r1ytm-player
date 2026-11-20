@@ -265,6 +265,7 @@
     rope.remove();
     document.documentElement.classList.remove('am-pos-' + posNow, 'am-in-header', 'am-top-float', 'am-search-open', 'am-dock',
       'am-side', 'am-side-in', 'am-side-float', 'am-side-full', 'am-side-fallback', 'am-brand-on');
+    sideEdgeLines(false);
     document.documentElement.classList.remove('am-refract', 'am-easy-track', 'am-show-volpct', 'am-ah');
     refractDefs.remove();
     document.documentElement.classList.remove('am-player-open', 'am-animating', 'am-fs', 'am-mini-hidden');

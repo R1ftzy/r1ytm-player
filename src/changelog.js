@@ -5,6 +5,10 @@
   // CHANGELOG: newest first. An entry newer than VERSION is the next update, still being made: it shows only in the
   // whole list (marked "Next update"), never as a popup.
   const CHANGELOG = [
+    { v: '1.9.10', date: '2026-11-20', title: 'A tidier sidebar for the bar on the left', items: [
+      'Left + Compact, in the sidebar: your library list now ends above the bar and scrolls in that space, instead of running behind the bar and the entries under it. Setting: Bar & menus > Size & position > Sidebar list ends above the bar',
+      'No more line down the sidebar\'s edge (it showed with a custom background once you scrolled or opened the player). Setting: Hide sidebar edge line',
+    ] },
     { v: '1.9.9', date: '2026-11-20', title: 'Faster everywhere, animation settings and fixes', items: [
       'Faster: the bar shows a click at once (play / pause, mute, like, shuffle, repeat), Lyrics and Up next open sooner from a closed player page, an auto-hidden bar comes back as soon as you point near it, the 3-dot menus open and run their actions about twice as fast, and the settings open faster',
       'Much less work in the background, in Firefox most of all: r1ytm no longer makes YouTube Music restyle the whole page several times a second, and does almost nothing in a background tab',
